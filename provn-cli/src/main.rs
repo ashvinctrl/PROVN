@@ -543,6 +543,9 @@ fn cmd_install() -> i32 {
 #[cfg(target_os = "macos")]
 const PLIST_LABEL: &str = "com.provn.semantic-server";
 
+#[cfg(target_os = "linux")]
+const SERVICE_UNIT: &str = "provn-semantic";
+
 fn print_server_status() -> i32 {
     if server_healthy() {
         eprintln!("  {}●  Layer 3 online{}  ·  127.0.0.1:8080", GREEN, RESET);
@@ -674,7 +677,181 @@ fn cmd_server(action: ServerAction) -> i32 {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
+fn cmd_server(action: ServerAction) -> i32 {
+    match action {
+        ServerAction::Status => print_server_status(),
+        ServerAction::Start  => linux_server_start(),
+        ServerAction::Stop   => linux_server_stop(),
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_server_start() -> i32 {
+    let cfg = config::load().unwrap_or_default();
+
+    eprintln!();
+    eprintln!("  {}Layer 3  ·  Semantic AI{}", BOLD, RESET);
+    eprintln!(
+        "  {}model   {}Gemma 4 E2B · fine-tuned on LeakBench · Q4_K_M{}",
+        DIM, RESET, DIM
+    );
+    eprintln!(
+        "  {}scope   {}ambiguous detections only  (confidence 40 – 80 %%){}",
+        DIM, RESET, DIM
+    );
+    eprintln!(
+        "  {}logs    {}journalctl --user -u {SERVICE_UNIT} -f{}",
+        DIM, RESET, DIM
+    );
+    eprintln!();
+
+    if server_healthy() {
+        eprintln!("  {}●  already online{}  ·  127.0.0.1:8080", GREEN, RESET);
+        eprintln!();
+        return 0;
+    }
+
+    // Resolve model: use config value as-is if absolute or already exists,
+    // otherwise look in ~/.provn/models/<name>.
+    let model_path = {
+        let raw = cfg.layers.semantic.model.trim().to_string();
+        let p   = std::path::Path::new(&raw);
+        if p.is_absolute() || p.exists() {
+            raw
+        } else {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{home}/.provn/models/{raw}")
+        }
+    };
+
+    if !std::path::Path::new(&model_path).exists() {
+        eprintln!("  {}✗  model not found{}  {}", RED, RESET, dim!(&model_path));
+        eprintln!("  {}Download it first:", DIM);
+        eprintln!("    hf download kshitizz36/provn-gemma4-e2b-q4km \\");
+        eprintln!("      provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models{}", RESET);
+        eprintln!();
+        return 1;
+    }
+
+    // Find llama-server on PATH; fall back to bare name and let the OS error.
+    let llama_bin = std::process::Command::new("which")
+        .arg("llama-server")
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "llama-server".to_string());
+
+    // Extract port from endpoint URL (e.g. "http://localhost:8080" → 8080).
+    let port: u16 = cfg.layers.semantic.endpoint
+        .rsplit(':')
+        .next()
+        .and_then(|s| s.trim_matches('/').parse().ok())
+        .unwrap_or(8080);
+
+    // Write a systemd user service unit — no root required.
+    let home     = std::env::var("HOME").unwrap_or_default();
+    let unit_dir = format!("{home}/.config/systemd/user");
+    let unit_path = format!("{unit_dir}/{SERVICE_UNIT}.service");
+
+    if let Err(e) = std::fs::create_dir_all(&unit_dir) {
+        eprintln!("  {}✗  cannot create unit dir{}  {e}", RED, RESET);
+        return 1;
+    }
+
+    let unit_content = format!(
+        "[Unit]\n\
+         Description=Provn Layer 3 semantic inference server\n\
+         After=network.target\n\n\
+         [Service]\n\
+         ExecStart={llama_bin} -m {model_path} --host 127.0.0.1 --port {port}\n\
+         Restart=on-failure\n\
+         RestartSec=5\n\n\
+         [Install]\n\
+         WantedBy=default.target\n"
+    );
+
+    if let Err(e) = std::fs::write(&unit_path, unit_content) {
+        eprintln!("  {}✗  cannot write unit file{}  {e}", RED, RESET);
+        return 1;
+    }
+
+    let reload = std::process::Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .output();
+
+    if reload.map(|o| !o.status.success()).unwrap_or(true) {
+        eprintln!("  {}✗  systemctl daemon-reload failed{}", RED, RESET);
+        eprintln!(
+            "  {}Is systemd --user running?  Try: systemctl --user status{}",
+            DIM, RESET
+        );
+        return 1;
+    }
+
+    match std::process::Command::new("systemctl")
+        .args(["--user", "start", SERVICE_UNIT])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            eprintln!("  {}●  online{}  ·  127.0.0.1:{port}", GREEN, RESET);
+            eprintln!(
+                "  {}model loads in ~25 s  ·  provn server status to confirm{}",
+                DIM, RESET
+            );
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!("  {}✗  failed to start{}  {}", RED, RESET, stderr.trim());
+            eprintln!(
+                "  {}journalctl --user -u {SERVICE_UNIT} -f{}",
+                DIM, RESET
+            );
+            eprintln!();
+            return 1;
+        }
+        Err(e) => {
+            eprintln!("  {}✗  systemctl error{}  {e}", RED, RESET);
+            eprintln!();
+            return 1;
+        }
+    }
+    eprintln!();
+    0
+}
+
+#[cfg(target_os = "linux")]
+fn linux_server_stop() -> i32 {
+    match std::process::Command::new("systemctl")
+        .args(["--user", "stop", SERVICE_UNIT])
+        .output()
+    {
+        Ok(o) if o.status.success() => {
+            eprintln!("  {}○  semantic server stopped{}", DIM, RESET);
+            eprintln!(
+                "  {}Layer 3 will fall back to Layer 1 / 2 result{}",
+                DIM, RESET
+            );
+            0
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            eprintln!(
+                "  {}✗  {}{}  (may already be stopped)",
+                RED, RESET, stderr.trim()
+            );
+            1
+        }
+        Err(e) => {
+            eprintln!("  {}✗  systemctl error{}  {e}", RED, RESET);
+            1
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn cmd_server(action: ServerAction) -> i32 {
     match action {
         ServerAction::Status => print_server_status(),
@@ -685,14 +862,13 @@ fn cmd_server(action: ServerAction) -> i32 {
                 eprintln!();
                 return 0;
             }
-
             eprintln!("  {}Layer 3  ·  Semantic AI{}", BOLD, RESET);
             eprintln!(
-                "  {}auto-start is currently supported on macOS only{}",
+                "  {}auto-start is not yet supported on this platform{}",
                 YELLOW, RESET
             );
             eprintln!(
-                "  {}Start your local semantic server manually, then run {}provn server status{}{}",
+                "  {}Start llama-server manually, then run {}provn server status{}{}",
                 DIM, CYAN, RESET, DIM
             );
             eprintln!(
@@ -705,11 +881,11 @@ fn cmd_server(action: ServerAction) -> i32 {
         ServerAction::Stop => {
             if server_healthy() {
                 eprintln!(
-                    "  {}✗  auto-stop is currently supported on macOS only{}",
+                    "  {}✗  auto-stop is not yet supported on this platform{}",
                     YELLOW, RESET
                 );
                 eprintln!(
-                    "  {}Stop your semantic server manually on this platform.{}",
+                    "  {}Stop llama-server manually.{}",
                     DIM, RESET
                 );
                 1
