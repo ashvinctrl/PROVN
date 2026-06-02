@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn detects_system_prompt_assignment() {
-        let src = r#"system_prompt = "You are a financial advisor with proprietary scoring.""#;
+        let src = r#"system_prompt = "You are a financial advisor with proprietary scoring.""#; // provn:allow
         let results = scan_source(src, "python", &default_cfg());
         assert!(!results.is_empty());
         assert_eq!(results[0].var_name, "system_prompt");
@@ -152,14 +152,14 @@ mod tests {
 
     #[test]
     fn detects_all_sensitive_assignments() {
-        let src = "system_prompt = \"You are a secret agent with classified intel.\"\napi_key = \"sk-proj-abcdefghijklmnopqrstuvwxyz123456\"";
+        let src = "system_prompt = \"You are a secret agent with classified intel.\"\napi_key = \"sk-proj-abcdefghijklmnopqrstuvwxyz123456\""; // provn:allow
         let results = scan_source(src, "python", &default_cfg());
         assert_eq!(results.len(), 2, "expected both assignments to be caught");
     }
 
     #[test]
     fn skips_test_values() {
-        let src = r#"api_key = "test_key_placeholder""#;
+        let src = r#"api_key = "test_key_placeholder""#; // provn:allow
         let result = scan_source(src, "python", &default_cfg());
         let _ = result; // verifies no panic; value may or may not be flagged
     }

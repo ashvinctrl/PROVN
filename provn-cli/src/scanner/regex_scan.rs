@@ -190,17 +190,17 @@ mod tests {
 
     #[test]
     fn detects_aws_access_key() {
-        assert!(!scan_line("AWS_ACCESS_KEY_ID = \"AKIAIOSFODNN7EXAMPLE\"", &[]).is_empty());
+        assert!(!scan_line("AWS_ACCESS_KEY_ID = \"AKIAIOSFODNN7EXAMPLE\"", &[]).is_empty()); // provn:allow
     }
 
     #[test]
     fn detects_openai_key() {
-        assert!(!scan_line("key = \"sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD\"", &[]).is_empty());
+        assert!(!scan_line("key = \"sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD\"", &[]).is_empty()); // provn:allow
     }
 
     #[test]
     fn detects_private_key_header() {
-        assert!(!scan_line("-----BEGIN RSA PRIVATE KEY-----", &[]).is_empty());
+        assert!(!scan_line("-----BEGIN RSA PRIVATE KEY-----", &[]).is_empty()); // provn:allow
     }
 
     #[test]
@@ -218,14 +218,14 @@ mod tests {
     #[test]
     fn returns_all_matches_on_multi_secret_line() {
         // A line containing both an AWS key and an OpenAI key must report both.
-        let line = "AKIAIOSFODNN7EXAMPLE sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD";
+        let line = "AKIAIOSFODNN7EXAMPLE sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD"; // provn:allow
         let hits = scan_line(line, &[]);
         assert!(hits.len() >= 2, "expected ≥2 matches, got {}", hits.len());
     }
 
     #[test]
     fn results_sorted_by_confidence_descending() {
-        let line = "AKIAIOSFODNN7EXAMPLE sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD";
+        let line = "AKIAIOSFODNN7EXAMPLE sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD"; // provn:allow
         let hits = scan_line(line, &[]);
         for w in hits.windows(2) {
             assert!(w[0].confidence >= w[1].confidence);

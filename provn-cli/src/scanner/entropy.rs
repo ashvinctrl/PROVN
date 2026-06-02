@@ -118,19 +118,19 @@ mod tests {
 
     #[test]
     fn flags_high_entropy_secret() {
-        let line = r#"secret = "x7Kp2mNqR9vT4wYjLhBcDfAeGiUoSzXn""#;
+        let line = r#"secret = "x7Kp2mNqR9vT4wYjLhBcDfAeGiUoSzXn""#; // provn:allow
         assert!(scan_line(line, &default_cfg()).is_some());
     }
 
     #[test]
     fn skips_png_base64() {
-        let line = r#"icon = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk""#;
+        let line = r#"icon = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk""#; // provn:allow
         assert!(scan_line(line, &default_cfg()).is_none());
     }
 
     #[test]
     fn skips_non_assignment_lines() {
-        let line = "x7Kp2mNqR9vT4wYjLhBcDfAeGiUoSzXn";
+        let line = "x7Kp2mNqR9vT4wYjLhBcDfAeGiUoSzXn"; // provn:allow
         assert!(scan_line(line, &default_cfg()).is_none());
     }
 
