@@ -32,30 +32,39 @@ pub fn parse_staged_diff(cfg: &Config) -> Result<Vec<DiffChunk>, DiffError> {
 }
 
 pub fn parse_file(path: &str, cfg: &Config) -> Result<Vec<DiffChunk>, DiffError> {
+    let file_path = PathBuf::from(path);
+
+    if should_skip(&file_path, cfg) {
+        return Ok(vec![]);
+    }
+
     let content = std::fs::read_to_string(path)?;
-    let ext = PathBuf::from(path)
+
+    // Honour provn:skip-file anywhere in the file — same semantics as in diff mode.
+    if content.contains("provn:skip-file") || content.contains("aegis:skip-file") {
+        return Ok(vec![]);
+    }
+
+    let ext = file_path
         .extension()
         .map(|e| e.to_string_lossy().to_string())
         .unwrap_or_default();
 
-    // Synthesize fake added lines (all lines are "added" when checking a file directly)
+    // Synthesize "added" lines from every line in the file, applying the same
+    // provn:allow filter that parse_diff_text uses so the annotation works in
+    // both `provn scan` (pre-commit) and `provn check` (file) modes.
     let added_lines: Vec<(usize, String)> = content
         .lines()
         .enumerate()
+        .filter(|(_, l)| !l.contains("provn:allow") && !l.contains("aegis:allow"))
         .map(|(i, l)| (i + 1, l.to_string()))
         .collect();
 
-    let chunk = DiffChunk {
-        file: PathBuf::from(path),
+    Ok(vec![DiffChunk {
+        file: file_path,
         extension: ext,
         added_lines,
-    };
-
-    if should_skip(&chunk.file, cfg) {
-        return Ok(vec![]);
-    }
-
-    Ok(vec![chunk])
+    }])
 }
 
 fn parse_diff_text(text: &str, cfg: &Config) -> Result<Vec<DiffChunk>, DiffError> {

@@ -21,20 +21,28 @@ pub struct ScanResult {
     pub latency_ms: u64,
 }
 
+/// Maximum number of ambiguous candidates forwarded to Layer 3.
+/// Capping at 3 bounds worst-case pre-commit latency while still catching
+/// multi-secret diffs that the old single-candidate approach would miss.
+const MAX_AMBIGUOUS: usize = 3;
+
 /// Scan all chunks and return every finding, sorted by confidence descending.
-/// Layer 3 (semantic) is invoked at most once — on the best ambiguous candidate —
-/// to keep pre-commit latency low.
 pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
     let start = Instant::now();
 
-    let mut confirmed: Vec<ScanResult> = Vec::new(); // high-confidence, no L3 needed
-    let mut ambiguous: Option<ScanResult> = None;    // best L1/L2 in the grey zone
+    // Compile user-defined patterns once before the scan loop to avoid
+    // recompiling the same regex on every line of the diff.
+    let compiled_custom = regex_scan::compile_custom_patterns(&cfg.layers.regex.custom_patterns);
+
+    let mut confirmed: Vec<ScanResult> = Vec::new();
+    let mut ambiguous: Vec<ScanResult> = Vec::new(); // top-N by confidence
 
     for chunk in chunks {
         for (line_num, line_content) in &chunk.added_lines {
-            // ── Layer 1a: regex ─────────────────────────────────────────────
+            // ── Layer 1a: regex — all matches on this line ───────────────────
             if cfg.layers.regex.enabled {
-                if let Some(m) = regex_scan::scan_line(line_content, &cfg.layers.regex.custom_patterns) {
+                for m in regex_scan::scan_line(line_content, &compiled_custom) {
+                    let conf = m.confidence;
                     let r = ScanResult {
                         file:        Some(chunk.file.to_string_lossy().into_owned()),
                         line:        Some(*line_num),
@@ -46,15 +54,15 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                         ),
                         snippet:     Some(line_content.chars().take(120).collect()),
                         redacted:    Some(m.redacted),
-                        confidence:  m.confidence,
+                        confidence:  conf,
                         layer:       Some("regex".to_string()),
-                        tier:        Some(m.tier.clone()),
+                        tier:        Some(m.tier),
                         latency_ms:  0,
                     };
-                    if m.confidence >= cfg.layers.semantic.ambiguous_high {
+                    if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
                     } else {
-                        keep_best(&mut ambiguous, r);
+                        add_ambiguous(&mut ambiguous, r);
                     }
                 }
             }
@@ -62,6 +70,7 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
             // ── Layer 1b: entropy ────────────────────────────────────────────
             if cfg.layers.entropy.enabled {
                 if let Some(m) = entropy::scan_line(line_content, &cfg.layers.entropy) {
+                    let conf = m.confidence;
                     let r = ScanResult {
                         file:        Some(chunk.file.to_string_lossy().into_owned()),
                         line:        Some(*line_num),
@@ -69,21 +78,21 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                         description: Some(format!("High entropy token (H={:.2})", m.entropy)),
                         snippet:     Some(line_content.chars().take(120).collect()),
                         redacted:    Some("PROVN_REDACTED_HIGH_ENTROPY".to_string()),
-                        confidence:  m.confidence,
+                        confidence:  conf,
                         layer:       Some("entropy".to_string()),
                         tier:        Some("T2".to_string()),
                         latency_ms:  0,
                     };
-                    if m.confidence >= cfg.layers.semantic.ambiguous_high {
+                    if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
                     } else {
-                        keep_best(&mut ambiguous, r);
+                        add_ambiguous(&mut ambiguous, r);
                     }
                 }
             }
         }
 
-        // ── Layer 2: AST (per file) ──────────────────────────────────────────
+        // ── Layer 2: AST — all sensitive assignments in this file ────────────
         if cfg.layers.ast.enabled {
             let src: String = chunk
                 .added_lines
@@ -93,13 +102,14 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                 .join("\n");
 
             let lang = match chunk.extension.as_str() {
-                "py"                                    => Some("python"),
-                "ts" | "tsx" | "js" | "jsx" | "mjs"   => Some("javascript"),
-                _                                       => None,
+                "py"                                  => Some("python"),
+                "ts" | "tsx" | "js" | "jsx" | "mjs" => Some("javascript"),
+                _                                     => None,
             };
 
             if let Some(lang) = lang {
-                if let Some(m) = ast::scan_source(&src, lang, &cfg.layers.ast) {
+                for m in ast::scan_source(&src, lang, &cfg.layers.ast) {
+                    let conf = m.confidence;
                     let r = ScanResult {
                         file:        Some(chunk.file.to_string_lossy().into_owned()),
                         line:        Some(m.line),
@@ -110,53 +120,82 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                         )),
                         snippet:     Some(m.snippet.chars().take(120).collect()),
                         redacted:    Some(format!("PROVN_REDACTED_{}", m.var_name.to_uppercase())),
-                        confidence:  m.confidence,
+                        confidence:  conf,
                         layer:       Some("ast".to_string()),
                         tier:        Some("T1".to_string()),
                         latency_ms:  0,
                     };
-                    if m.confidence >= cfg.layers.semantic.ambiguous_high {
+                    if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
                     } else {
-                        keep_best(&mut ambiguous, r);
+                        add_ambiguous(&mut ambiguous, r);
                     }
                 }
             }
         }
     }
 
-    // ── Layer 3: semantic — one call on the best ambiguous candidate ──────────
-    if let Some(cand) = ambiguous {
-        let conf    = cand.confidence;
+    // ── Layer 3: semantic — fan out to all ambiguous candidates ──────────────
+    if !ambiguous.is_empty() {
         let sem_cfg = &cfg.layers.semantic;
-        let ready   = sem_cfg.enabled && !sem_cfg.model.trim().is_empty();
+        let ready = sem_cfg.enabled && !sem_cfg.model.trim().is_empty();
 
-        if ready && conf >= sem_cfg.ambiguous_low && conf < sem_cfg.ambiguous_high {
-            let code = cand.snippet.as_deref().unwrap_or("");
-            let sem  = semantic::classify(code, &sem_cfg.endpoint, sem_cfg.timeout_ms);
+        if ready {
+            let endpoint    = sem_cfg.endpoint.clone();
+            let timeout_ms  = sem_cfg.timeout_ms;
+            let lo          = sem_cfg.ambiguous_low;
+            let hi          = sem_cfg.ambiguous_high;
+            let fallback    = sem_cfg.fallback.clone();
 
-            if !sem.skipped {
-                if sem.label == "leak" {
-                    let mut c = cand;
-                    c.confidence = 0.85;
-                    c.layer      = Some("semantic".to_string());
-                    confirmed.push(c);
+            let handles: Vec<_> = ambiguous
+                .into_iter()
+                .map(|cand| {
+                    let ep  = endpoint.clone();
+                    let fb  = fallback.clone();
+                    std::thread::spawn(move || -> Option<ScanResult> {
+                        let conf = cand.confidence;
+                        if conf >= lo && conf < hi {
+                            let code = cand.snippet.as_deref().unwrap_or("").to_string();
+                            let sem  = semantic::classify(&code, &ep, timeout_ms);
+                            if sem.skipped {
+                                if fb != "clean" { Some(cand) } else { None }
+                            } else if sem.label == "leak" {
+                                let mut c    = cand;
+                                c.confidence = 0.85;
+                                c.layer      = Some("semantic".to_string());
+                                Some(c)
+                            } else {
+                                None // L3 cleared it
+                            }
+                        } else if conf >= lo {
+                            Some(cand) // above band — include as-is
+                        } else {
+                            None
+                        }
+                    })
+                })
+                .collect();
+
+            for handle in handles {
+                if let Ok(Some(r)) = handle.join() {
+                    confirmed.push(r);
                 }
-                // "clean" → L3 cleared it, discard
-            } else {
-                // L3 unavailable — apply fallback policy
-                if sem_cfg.fallback != "clean" {
+            }
+        } else {
+            // L3 not configured — include any candidate above the low threshold
+            for cand in ambiguous {
+                if cand.confidence >= sem_cfg.ambiguous_low {
                     confirmed.push(cand);
                 }
             }
-        } else if conf >= sem_cfg.ambiguous_low {
-            // Outside ambiguous band but above low threshold — include as-is
-            confirmed.push(cand);
         }
     }
 
-    // Sort by confidence descending and stamp shared latency
-    confirmed.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    confirmed.sort_by(|a, b| {
+        b.confidence
+            .partial_cmp(&a.confidence)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let elapsed = start.elapsed().as_millis() as u64;
     for r in &mut confirmed {
         r.latency_ms = elapsed;
@@ -164,10 +203,21 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
     confirmed
 }
 
-/// Keep the higher-confidence candidate in the ambiguous pool.
-fn keep_best(slot: &mut Option<ScanResult>, new: ScanResult) {
-    match slot {
-        Some(existing) if existing.confidence >= new.confidence => {}
-        _ => *slot = Some(new),
+/// Keep the top [`MAX_AMBIGUOUS`] candidates by confidence.
+fn add_ambiguous(pool: &mut Vec<ScanResult>, new: ScanResult) {
+    if pool.len() < MAX_AMBIGUOUS {
+        pool.push(new);
+        pool.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    } else if pool.last().map_or(false, |w| new.confidence > w.confidence) {
+        *pool.last_mut().unwrap() = new;
+        pool.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
 }

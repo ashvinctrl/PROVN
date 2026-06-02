@@ -18,6 +18,16 @@ struct Pattern {
     redacted_prefix: &'static str,
 }
 
+/// Pre-compiled form of a user-defined custom pattern.
+/// Compile once via [`compile_custom_patterns`] before the scan loop.
+pub struct CompiledCustomPattern {
+    pub name: String,
+    pub tier: String,
+    pub confidence: f64,
+    pub description: Option<String>,
+    pub re: Regex,
+}
+
 static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
     vec![
         Pattern {
@@ -38,7 +48,7 @@ static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
             name: "openai_api_key",
             tier: "T1",
             confidence: 0.97,
-            re: Regex::new(r"sk-(?:proj-)?[a-zA-Z0-9]{40,}").unwrap(),
+            re: Regex::new(r"sk-(?:proj-|svcacct-)?[a-zA-Z0-9]{40,}").unwrap(),
             redacted_prefix: "PROVN_REDACTED_OPENAI_KEY",
         },
         Pattern {
@@ -121,38 +131,57 @@ static PATTERNS: Lazy<Vec<Pattern>> = Lazy::new(|| {
     ]
 });
 
-pub fn scan_line(line: &str, custom: &[crate::config::CustomPattern]) -> Option<RegexMatch> {
+/// Compile user-defined patterns from config once before the scan loop.
+/// Patterns that fail to compile are silently skipped.
+pub fn compile_custom_patterns(patterns: &[crate::config::CustomPattern]) -> Vec<CompiledCustomPattern> {
+    patterns
+        .iter()
+        .filter_map(|cp| {
+            Regex::new(&cp.pattern).ok().map(|re| CompiledCustomPattern {
+                name: cp.name.clone(),
+                tier: cp.tier.clone(),
+                confidence: cp.confidence,
+                description: cp.description.clone(),
+                re,
+            })
+        })
+        .collect()
+}
+
+/// Scan one line and return **all** matches, sorted by confidence descending.
+/// Previously returned only the first match, so a line with both an AWS key and
+/// an OpenAI key would silently drop one of them.
+pub fn scan_line(line: &str, custom: &[CompiledCustomPattern]) -> Vec<RegexMatch> {
     // NFKC normalize to catch homoglyph attacks (Cyrillic 'а' → 'a')
     let normalized: String = line.nfkc().collect();
+    let mut matches: Vec<RegexMatch> = Vec::new();
 
     for pattern in PATTERNS.iter() {
         if pattern.re.is_match(&normalized) {
-            return Some(RegexMatch {
+            matches.push(RegexMatch {
                 pattern_name: pattern.name.to_string(),
-                tier: pattern.tier.to_string(),
-                confidence: pattern.confidence,
-                redacted: format!("{}_1", pattern.redacted_prefix),
-                description: None,
+                tier:         pattern.tier.to_string(),
+                confidence:   pattern.confidence,
+                redacted:     format!("{}_1", pattern.redacted_prefix),
+                description:  None,
             });
         }
     }
 
-    // User-defined patterns (from provn.yml regex.custom_patterns)
     for cp in custom {
-        if let Ok(re) = Regex::new(&cp.pattern) {
-            if re.is_match(&normalized) {
-                return Some(RegexMatch {
-                    pattern_name: cp.name.clone(),
-                    tier:         cp.tier.clone(),
-                    confidence:   cp.confidence,
-                    redacted:     format!("PROVN_REDACTED_{}", cp.name.to_uppercase().replace(' ', "_")),
-                    description:  cp.description.clone(),
-                });
-            }
+        if cp.re.is_match(&normalized) {
+            matches.push(RegexMatch {
+                pattern_name: cp.name.clone(),
+                tier:         cp.tier.clone(),
+                confidence:   cp.confidence,
+                redacted:     format!("PROVN_REDACTED_{}", cp.name.to_uppercase().replace(' ', "_")),
+                description:  cp.description.clone(),
+            });
         }
     }
 
-    None
+    matches.sort_by(|a, b| b.confidence.partial_cmp(&a.confidence).unwrap_or(std::cmp::Ordering::Equal));
+    matches
 }
 
 #[cfg(test)]
@@ -161,42 +190,57 @@ mod tests {
 
     #[test]
     fn detects_aws_access_key() {
-        assert!(scan_line("AWS_ACCESS_KEY_ID = \"AKIAIOSFODNN7EXAMPLE\"", &[]).is_some());
+        assert!(!scan_line("AWS_ACCESS_KEY_ID = \"AKIAIOSFODNN7EXAMPLE\"", &[]).is_empty()); // provn:allow
     }
 
     #[test]
     fn detects_openai_key() {
-        assert!(scan_line("key = \"sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD\"", &[]).is_some());
+        assert!(!scan_line("key = \"sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD\"", &[]).is_empty()); // provn:allow
     }
 
     #[test]
     fn detects_private_key_header() {
-        assert!(scan_line("-----BEGIN RSA PRIVATE KEY-----", &[]).is_some());
+        assert!(!scan_line("-----BEGIN RSA PRIVATE KEY-----", &[]).is_empty()); // provn:allow
     }
 
     #[test]
     fn allows_clean_code() {
-        assert!(scan_line("def calculate_total(items): return sum(items)", &[]).is_none());
+        assert!(scan_line("def calculate_total(items): return sum(items)", &[]).is_empty());
     }
 
     #[test]
     fn detects_homoglyph_aws_key() {
         // Cyrillic А (U+0410) instead of Latin A — NFKC normalizes it
         let homoglyph_line = "АKIАIOSFODNNsomething7EXАMPLE";
-        // This may or may not match depending on normalization result
         let _ = scan_line(homoglyph_line, &[]);
     }
 
     #[test]
+    fn returns_all_matches_on_multi_secret_line() {
+        // A line containing both an AWS key and an OpenAI key must report both.
+        let line = "AKIAIOSFODNN7EXAMPLE sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD"; // provn:allow
+        let hits = scan_line(line, &[]);
+        assert!(hits.len() >= 2, "expected ≥2 matches, got {}", hits.len());
+    }
+
+    #[test]
+    fn results_sorted_by_confidence_descending() {
+        let line = "AKIAIOSFODNN7EXAMPLE sk-proj-abcdefghijklmnopqrstuvwxyz1234567890ABCD"; // provn:allow
+        let hits = scan_line(line, &[]);
+        for w in hits.windows(2) {
+            assert!(w[0].confidence >= w[1].confidence);
+        }
+    }
+
+    #[test]
     fn detects_custom_pattern() {
-        use crate::config::CustomPattern;
-        let cp = CustomPattern {
-            name: "internal_import".to_string(),
-            pattern: r"from corp_internal\.".to_string(),
-            tier: "T1".to_string(),
-            confidence: 0.9,
+        let cp = CompiledCustomPattern {
+            name:        "internal_import".to_string(),
+            tier:        "T1".to_string(),
+            confidence:  0.9,
             description: None,
+            re:          Regex::new(r"from corp_internal\.").unwrap(),
         };
-        assert!(scan_line("from corp_internal.utils import helper", &[cp]).is_some());
+        assert!(!scan_line("from corp_internal.utils import helper", &[cp]).is_empty());
     }
 }
