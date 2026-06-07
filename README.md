@@ -1,13 +1,10 @@
 # Provn
 
-<p align="center">
-  <img src="https://raw.githubusercontent.com/kshitizz36/Provn/main/docs/images/provn-logo.png" alt="Provn terminal screenshot" width="560" />
-</p>
 
 <p align="center"><strong>AI powered secret and IP leak detection that runs before code leaves your machine.</strong></p>
 
 <p align="center"><code>npm install -g provn-cli</code></p>
-<p align="center"><code>brew install kshitizz36/tap/provn</code></p>
+<p align="center"><code>brew install ashvinctrl/tap/provn</code></p>
 
 Provn is a local first pre commit scanner that blocks secrets, API keys, tokens, private keys, and proprietary snippets before they land in git. Layer 1 and Layer 2 work immediately. Layer 3 AI is optional and installs separately.
 
@@ -20,11 +17,11 @@ npm install -g provn-cli
 ```
 
 ```bash
-brew install kshitizz36/tap/provn
+brew install ashvinctrl/tap/provn
 ```
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kshitizz36/Provn/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ashvinctrl/PROVN/main/install.sh | bash
 ```
 
 ### Quick start without cloning
