@@ -1,0 +1,48 @@
+# Uploads Provn findings to GitHub Code Scanning (Security tab + inline PR
+# annotations). Complements provn-enforce.yml: enforce blocks the merge,
+# this surfaces every finding with file/line context in the UI.
+name: Provn SARIF
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+  security-events: write   # required for upload-sarif
+
+jobs:
+  sarif:
+    name: Scan and upload SARIF
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            provn-cli/target
+          key: ${{ runner.os }}-cargo-sarif-${{ hashFiles('provn-cli/Cargo.lock') }}
+
+      - name: Build Provn
+        run: cd provn-cli && cargo build --release
+
+      - name: Scan working tree → SARIF
+        # check exits 1 when findings exist; keep going so we still upload.
+        run: ./provn-cli/target/release/provn check . --format sarif > provn.sarif || true
+
+      - name: Upload SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: provn.sarif
+          category: provn

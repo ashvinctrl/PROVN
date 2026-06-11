@@ -1,6 +1,6 @@
-use std::time::Instant;
 use crate::config::Config;
 use crate::diff::DiffChunk;
+use std::time::Instant;
 
 pub mod ast;
 pub mod entropy;
@@ -14,11 +14,18 @@ pub struct ScanResult {
     pub match_type: Option<String>,
     pub description: Option<String>,
     pub snippet: Option<String>,
+    /// Exact secret text when the layer can pinpoint it. Kept in memory for
+    /// span-precise redaction only — never written to JSON output or the
+    /// audit log.
+    pub secret: Option<String>,
     pub redacted: Option<String>,
     pub confidence: f64,
     pub layer: Option<String>,
     pub tier: Option<String>,
     pub latency_ms: u64,
+    /// True when Layer 3 was wanted for this finding but the semantic server
+    /// was unavailable — recorded in the audit log as `ai_layer: skipped`.
+    pub ai_skipped: bool,
 }
 
 /// Maximum number of ambiguous candidates forwarded to Layer 3.
@@ -30,9 +37,10 @@ const MAX_AMBIGUOUS: usize = 3;
 pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
     let start = Instant::now();
 
-    // Compile user-defined patterns once before the scan loop to avoid
-    // recompiling the same regex on every line of the diff.
-    let compiled_custom = regex_scan::compile_custom_patterns(&cfg.layers.regex.custom_patterns);
+    // Build the full pattern set (built-in or runtime override + custom)
+    // once before the scan loop to avoid recompiling per line.
+    let pattern_set = regex_scan::build_pattern_set(&cfg.layers.regex);
+    let entropy_allowlist = entropy::compile_allowlist(&cfg.layers.entropy.allowlist);
 
     let mut confirmed: Vec<ScanResult> = Vec::new();
     let mut ambiguous: Vec<ScanResult> = Vec::new(); // top-N by confidence
@@ -41,23 +49,24 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
         for (line_num, line_content) in &chunk.added_lines {
             // ── Layer 1a: regex — all matches on this line ───────────────────
             if cfg.layers.regex.enabled {
-                for m in regex_scan::scan_line(line_content, &compiled_custom) {
+                for m in regex_scan::scan_line(line_content, &pattern_set) {
                     let conf = m.confidence;
                     let r = ScanResult {
-                        file:        Some(chunk.file.to_string_lossy().into_owned()),
-                        line:        Some(*line_num),
-                        match_type:  Some(m.pattern_name.clone()),
+                        file: Some(chunk.file.to_string_lossy().into_owned()),
+                        line: Some(*line_num),
+                        match_type: Some(m.pattern_name.clone()),
                         description: Some(
-                            m.description.unwrap_or_else(|| {
-                                format!("Matched pattern: {}", m.pattern_name)
-                            }),
+                            m.description
+                                .unwrap_or_else(|| format!("Matched pattern: {}", m.pattern_name)),
                         ),
-                        snippet:     Some(line_content.chars().take(120).collect()),
-                        redacted:    Some(m.redacted),
-                        confidence:  conf,
-                        layer:       Some("regex".to_string()),
-                        tier:        Some(m.tier),
-                        latency_ms:  0,
+                        snippet: Some(line_content.chars().take(120).collect()),
+                        secret: m.secret,
+                        redacted: Some(m.redacted),
+                        confidence: conf,
+                        layer: Some("regex".to_string()),
+                        tier: Some(m.tier),
+                        latency_ms: 0,
+                        ai_skipped: false,
                     };
                     if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
@@ -69,19 +78,26 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
 
             // ── Layer 1b: entropy ────────────────────────────────────────────
             if cfg.layers.entropy.enabled {
-                if let Some(m) = entropy::scan_line(line_content, &cfg.layers.entropy) {
+                if let Some(m) = entropy::scan_line(
+                    line_content,
+                    &chunk.extension,
+                    &cfg.layers.entropy,
+                    &entropy_allowlist,
+                ) {
                     let conf = m.confidence;
                     let r = ScanResult {
-                        file:        Some(chunk.file.to_string_lossy().into_owned()),
-                        line:        Some(*line_num),
-                        match_type:  Some("high_entropy".to_string()),
+                        file: Some(chunk.file.to_string_lossy().into_owned()),
+                        line: Some(*line_num),
+                        match_type: Some("high_entropy".to_string()),
                         description: Some(format!("High entropy token (H={:.2})", m.entropy)),
-                        snippet:     Some(line_content.chars().take(120).collect()),
-                        redacted:    Some("PROVN_REDACTED_HIGH_ENTROPY".to_string()),
-                        confidence:  conf,
-                        layer:       Some("entropy".to_string()),
-                        tier:        Some("T2".to_string()),
-                        latency_ms:  0,
+                        snippet: Some(line_content.chars().take(120).collect()),
+                        secret: m.token.clone(),
+                        redacted: Some("PROVN_REDACTED_HIGH_ENTROPY".to_string()),
+                        confidence: conf,
+                        layer: Some("entropy".to_string()),
+                        tier: Some("T2".to_string()),
+                        latency_ms: 0,
+                        ai_skipped: false,
                     };
                     if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
@@ -102,28 +118,39 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                 .join("\n");
 
             let lang = match chunk.extension.as_str() {
-                "py"                                  => Some("python"),
-                "ts" | "tsx" | "js" | "jsx" | "mjs" => Some("javascript"),
-                _                                     => None,
+                "py" => Some("python"),
+                "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
+                "ts" | "mts" | "cts" => Some("typescript"),
+                "tsx" => Some("tsx"),
+                _ => None,
             };
 
             if let Some(lang) = lang {
                 for m in ast::scan_source(&src, lang, &cfg.layers.ast) {
                     let conf = m.confidence;
+                    // m.line is the row in the joined added-lines source —
+                    // map it back to the real file line number.
+                    let real_line = chunk
+                        .added_lines
+                        .get(m.line.saturating_sub(1))
+                        .map(|(n, _)| *n)
+                        .unwrap_or(m.line);
                     let r = ScanResult {
-                        file:        Some(chunk.file.to_string_lossy().into_owned()),
-                        line:        Some(m.line),
-                        match_type:  Some("ast_taint".to_string()),
+                        file: Some(chunk.file.to_string_lossy().into_owned()),
+                        line: Some(real_line),
+                        match_type: Some("ast_taint".to_string()),
                         description: Some(format!(
                             "Sensitive variable '{}' assigned string literal",
                             m.var_name
                         )),
-                        snippet:     Some(m.snippet.chars().take(120).collect()),
-                        redacted:    Some(format!("PROVN_REDACTED_{}", m.var_name.to_uppercase())),
-                        confidence:  conf,
-                        layer:       Some("ast".to_string()),
-                        tier:        Some("T1".to_string()),
-                        latency_ms:  0,
+                        snippet: Some(m.snippet.chars().take(120).collect()),
+                        secret: m.value.clone(),
+                        redacted: Some(format!("PROVN_REDACTED_{}", m.var_name.to_uppercase())),
+                        confidence: conf,
+                        layer: Some("ast".to_string()),
+                        tier: Some("T1".to_string()),
+                        latency_ms: 0,
+                        ai_skipped: false,
                     };
                     if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
@@ -141,28 +168,34 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
         let ready = sem_cfg.enabled && !sem_cfg.model.trim().is_empty();
 
         if ready {
-            let endpoint    = sem_cfg.endpoint.clone();
-            let timeout_ms  = sem_cfg.timeout_ms;
-            let lo          = sem_cfg.ambiguous_low;
-            let hi          = sem_cfg.ambiguous_high;
-            let fallback    = sem_cfg.fallback.clone();
+            let endpoint = sem_cfg.endpoint.clone();
+            let timeout_ms = sem_cfg.timeout_ms;
+            let lo = sem_cfg.ambiguous_low;
+            let hi = sem_cfg.ambiguous_high;
+            let fallback = sem_cfg.fallback.clone();
 
             let handles: Vec<_> = ambiguous
                 .into_iter()
                 .map(|cand| {
-                    let ep  = endpoint.clone();
-                    let fb  = fallback.clone();
+                    let ep = endpoint.clone();
+                    let fb = fallback.clone();
                     std::thread::spawn(move || -> Option<ScanResult> {
                         let conf = cand.confidence;
                         if conf >= lo && conf < hi {
                             let code = cand.snippet.as_deref().unwrap_or("").to_string();
-                            let sem  = semantic::classify(&code, &ep, timeout_ms);
+                            let sem = semantic::classify(&code, &ep, timeout_ms);
                             if sem.skipped {
-                                if fb != "clean" { Some(cand) } else { None }
+                                if fb != "clean" {
+                                    let mut c = cand;
+                                    c.ai_skipped = true;
+                                    Some(c)
+                                } else {
+                                    None
+                                }
                             } else if sem.label == "leak" {
-                                let mut c    = cand;
+                                let mut c = cand;
                                 c.confidence = 0.85;
-                                c.layer      = Some("semantic".to_string());
+                                c.layer = Some("semantic".to_string());
                                 Some(c)
                             } else {
                                 None // L3 cleared it
@@ -212,7 +245,7 @@ fn add_ambiguous(pool: &mut Vec<ScanResult>, new: ScanResult) {
                 .partial_cmp(&a.confidence)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
-    } else if pool.last().map_or(false, |w| new.confidence > w.confidence) {
+    } else if pool.last().is_some_and(|w| new.confidence > w.confidence) {
         *pool.last_mut().unwrap() = new;
         pool.sort_by(|a, b| {
             b.confidence

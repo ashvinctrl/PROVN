@@ -1,14 +1,14 @@
-use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
-use std::path::Path;
-use chrono::Utc;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use serde::{Deserialize, Serialize};
-use thiserror::Error;
 use crate::config::Config;
 use crate::policy::Verdict;
 use crate::scanner::ScanResult;
+use chrono::Utc;
+use hmac::{Hmac, Mac};
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+use std::fs::{self, OpenOptions};
+use std::io::{BufRead, BufReader, Write};
+use std::path::Path;
+use thiserror::Error;
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -31,8 +31,57 @@ pub struct AuditEntry {
     pub tier: Option<String>,
     pub layer: Option<String>,
     pub verdict: String,
+    // Structured context fields — optional so chains written by older
+    // versions still verify (absent fields are excluded from the HMAC
+    // payload on both the write and verify paths).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provn_version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scan_duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_layer: Option<String>,
     pub prev_hash: String,
     pub hmac: String,
+}
+
+/// Canonical JSON payload used for HMAC signing. serde_json maps serialize
+/// with sorted keys, so this is deterministic; optional fields are included
+/// only when present, keeping old log entries verifiable.
+#[allow(clippy::too_many_arguments)]
+fn signing_payload(
+    seq: u64,
+    timestamp: &str,
+    event: &str,
+    file: &Option<String>,
+    tier: &Option<String>,
+    layer: &Option<String>,
+    verdict: &str,
+    prev_hash: &str,
+    provn_version: &Option<String>,
+    scan_duration_ms: &Option<u64>,
+    ai_layer: &Option<String>,
+) -> String {
+    let mut payload = serde_json::json!({
+        "seq": seq,
+        "timestamp": timestamp,
+        "event": event,
+        "file": file,
+        "tier": tier,
+        "layer": layer,
+        "verdict": verdict,
+        "prev_hash": prev_hash,
+    });
+    let obj = payload.as_object_mut().expect("payload is an object");
+    if let Some(v) = provn_version {
+        obj.insert("provn_version".into(), serde_json::json!(v));
+    }
+    if let Some(v) = scan_duration_ms {
+        obj.insert("scan_duration_ms".into(), serde_json::json!(v));
+    }
+    if let Some(v) = ai_layer {
+        obj.insert("ai_layer".into(), serde_json::json!(v));
+    }
+    payload.to_string()
 }
 
 fn get_or_create_hmac_key(key_path: &str) -> Vec<u8> {
@@ -91,7 +140,10 @@ pub fn append(verdict: &Verdict, result: &ScanResult, cfg: &Config) -> Result<()
 
     let last = read_last_entry(audit_path);
     let seq = last.as_ref().map(|e| e.seq + 1).unwrap_or(0);
-    let prev_hash = last.as_ref().map(hash_entry).unwrap_or_else(|| "genesis".to_string());
+    let prev_hash = last
+        .as_ref()
+        .map(hash_entry)
+        .unwrap_or_else(|| "genesis".to_string());
     let timestamp = Utc::now().to_rfc3339();
 
     let verdict_str = match verdict {
@@ -99,33 +151,56 @@ pub fn append(verdict: &Verdict, result: &ScanResult, cfg: &Config) -> Result<()
         Verdict::Warn(t) | Verdict::Block(t) => t.as_str(),
     };
 
-    // Build entry without HMAC field first for signing
-    let entry_payload = serde_json::json!({
-        "seq": seq,
-        "timestamp": timestamp,
-        "event": format!("{:?}", verdict).split('(').next().unwrap_or("Unknown").to_uppercase(),
-        "file": result.file,
-        "tier": result.tier,
-        "layer": result.layer,
-        "verdict": verdict_str,
-        "prev_hash": prev_hash,
-    });
+    let event = format!("{:?}", verdict)
+        .split('(')
+        .next()
+        .unwrap_or("Unknown")
+        .to_uppercase();
 
-    let hmac = hmac_sign(&key, &entry_payload.to_string());
+    let provn_version = Some(env!("CARGO_PKG_VERSION").to_string());
+    let scan_duration_ms = Some(result.latency_ms);
+    let ai_layer = if result.ai_skipped {
+        Some("skipped".to_string())
+    } else if result.layer.as_deref() == Some("semantic") {
+        Some("used".to_string())
+    } else {
+        None
+    };
+
+    let payload = signing_payload(
+        seq,
+        &timestamp,
+        &event,
+        &result.file,
+        &result.tier,
+        &result.layer,
+        verdict_str,
+        &prev_hash,
+        &provn_version,
+        &scan_duration_ms,
+        &ai_layer,
+    );
+    let hmac = hmac_sign(&key, &payload);
 
     let entry = AuditEntry {
         seq,
         timestamp,
-        event: entry_payload["event"].as_str().unwrap_or("").to_string(),
+        event,
         file: result.file.clone(),
         tier: result.tier.clone(),
         layer: result.layer.clone(),
         verdict: verdict_str.to_string(),
+        provn_version,
+        scan_duration_ms,
+        ai_layer,
         prev_hash,
         hmac,
     };
 
-    let mut file = OpenOptions::new().create(true).append(true).open(audit_path)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(audit_path)?;
     writeln!(file, "{}", serde_json::to_string(&entry)?)?;
 
     Ok(())
@@ -157,17 +232,20 @@ pub fn verify_chain(audit_path: &str, hmac_key_path: &str) -> Result<usize, Audi
         }
 
         // Verify HMAC
-        let entry_payload = serde_json::json!({
-            "seq": entry.seq,
-            "timestamp": entry.timestamp,
-            "event": entry.event,
-            "file": entry.file,
-            "tier": entry.tier,
-            "layer": entry.layer,
-            "verdict": entry.verdict,
-            "prev_hash": entry.prev_hash,
-        });
-        let expected_hmac = hmac_sign(&key, &entry_payload.to_string());
+        let payload = signing_payload(
+            entry.seq,
+            &entry.timestamp,
+            &entry.event,
+            &entry.file,
+            &entry.tier,
+            &entry.layer,
+            &entry.verdict,
+            &entry.prev_hash,
+            &entry.provn_version,
+            &entry.scan_duration_ms,
+            &entry.ai_layer,
+        );
+        let expected_hmac = hmac_sign(&key, &payload);
         if entry.hmac != expected_hmac {
             return Err(AuditError::Chain(format!(
                 "HMAC invalid at seq {}",
@@ -204,7 +282,9 @@ mod tests {
             file: Some("bot.py".to_string()),
             line: Some(1),
             match_type: Some("ast_taint".to_string()),
-            description: Some("Sensitive variable 'system_prompt' assigned string literal".to_string()),
+            description: Some(
+                "Sensitive variable 'system_prompt' assigned string literal".to_string(),
+            ),
             snippet: Some(
                 "system_prompt = \"Use our proprietary ranking rubric and do not disclose it.\""
                     .to_string(),
@@ -213,7 +293,7 @@ mod tests {
             confidence: 0.70,
             layer: Some("ast".to_string()),
             tier: Some("T1".to_string()),
-            latency_ms: 0,
+            ..Default::default()
         };
 
         let t2_result = ScanResult {
@@ -221,12 +301,12 @@ mod tests {
             line: Some(1),
             match_type: Some("high_entropy".to_string()),
             description: Some("High entropy token (H=5.00)".to_string()),
-            snippet: Some("secret_token = \"x7Kp2mNqR9vT4wYjLhBcDfAeGiUoSzXnPqRsT\"".to_string()),
+            snippet: Some("secret_token = \"x7Kp2mNqR9vT4wYjLhBcDfAeGiUoSzXnPqRsT\"".to_string()), // provn:allow
             redacted: Some("PROVN_REDACTED_HIGH_ENTROPY".to_string()),
             confidence: 0.66,
             layer: Some("entropy".to_string()),
             tier: Some("T2".to_string()),
-            latency_ms: 0,
+            ..Default::default()
         };
 
         append(&Verdict::Block("T1".to_string()), &t1_result, &cfg).unwrap();
@@ -234,6 +314,64 @@ mod tests {
 
         let count = verify_chain(&cfg.audit.path, &cfg.audit.hmac_key_path).unwrap();
         assert_eq!(count, 2);
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn new_entries_carry_structured_fields() {
+        let temp_dir = std::env::temp_dir().join(format!("provn-audit-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.audit.path = temp_dir.join("audit.jsonl").display().to_string();
+        cfg.audit.hmac_key_path = temp_dir.join("hmac.key").display().to_string();
+
+        let result = ScanResult {
+            file: Some("a.py".to_string()),
+            tier: Some("T1".to_string()),
+            latency_ms: 42,
+            ai_skipped: true,
+            ..Default::default()
+        };
+        append(&Verdict::Block("T1".to_string()), &result, &cfg).unwrap();
+
+        let raw = fs::read_to_string(&cfg.audit.path).unwrap();
+        assert!(raw.contains("\"provn_version\""));
+        assert!(raw.contains("\"scan_duration_ms\":42"));
+        assert!(raw.contains("\"ai_layer\":\"skipped\""));
+        // Chain must still verify with the new fields in the payload.
+        assert_eq!(
+            verify_chain(&cfg.audit.path, &cfg.audit.hmac_key_path).unwrap(),
+            1
+        );
+
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn tampered_entry_fails_verification() {
+        let temp_dir = std::env::temp_dir().join(format!("provn-audit-{}", Uuid::new_v4()));
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let mut cfg = Config::default();
+        cfg.audit.path = temp_dir.join("audit.jsonl").display().to_string();
+        cfg.audit.hmac_key_path = temp_dir.join("hmac.key").display().to_string();
+
+        let result = ScanResult {
+            file: Some("a.py".to_string()),
+            tier: Some("T0".to_string()),
+            ..Default::default()
+        };
+        append(&Verdict::Block("T0".to_string()), &result, &cfg).unwrap();
+
+        // Flip the verdict in the stored entry — verification must fail.
+        let raw = fs::read_to_string(&cfg.audit.path).unwrap();
+        let tampered = raw.replace("\"verdict\":\"T0\"", "\"verdict\":\"ALLOW\"");
+        assert_ne!(raw, tampered, "test setup: replacement must change content");
+        fs::write(&cfg.audit.path, tampered).unwrap();
+
+        assert!(verify_chain(&cfg.audit.path, &cfg.audit.hmac_key_path).is_err());
 
         fs::remove_dir_all(&temp_dir).unwrap();
     }

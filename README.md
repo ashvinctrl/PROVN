@@ -1,5 +1,8 @@
 # Provn
 
+<p align="center">
+  <img src="https://raw.githubusercontent.com/ashvinctrl/Provn/main/docs/images/provn-logo.png" alt="Provn terminal screenshot" width="560" />
+</p>
 
 <p align="center"><strong>AI powered secret and IP leak detection that runs before code leaves your machine.</strong></p>
 
@@ -21,7 +24,7 @@ brew install ashvinctrl/tap/provn
 ```
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ashvinctrl/PROVN/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ashvinctrl/Provn/main/install.sh | bash
 ```
 
 ### Quick start without cloning
@@ -38,7 +41,7 @@ git commit -m "first protected commit"
 You do **not** need to clone the Provn repo to use Layer 3. Install the CLI first, then download the model separately from Hugging Face.
 
 Model page:
-[https://huggingface.co/kshitizz36/provn-gemma4-e2b-q4km](https://huggingface.co/kshitizz36/provn-gemma4-e2b-q4km)
+[https://huggingface.co/ashvinctrl/provn-gemma4-e2b-q4km](https://huggingface.co/ashvinctrl/provn-gemma4-e2b-q4km)
 
 **macOS / Linux**
 
@@ -46,7 +49,7 @@ Model page:
 brew install hf
 hf auth login
 mkdir -p ~/.provn/models
-hf download kshitizz36/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models
+hf download ashvinctrl/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models
 llama-server -m ~/.provn/models/provn-gemma4-e2b-q4km.gguf --host 127.0.0.1 --port 8080
 provn server status
 ```
@@ -57,7 +60,7 @@ provn server status
 pip install "huggingface_hub[cli]"
 hf auth login
 New-Item -ItemType Directory -Force "$HOME\.provn\models"
-hf download kshitizz36/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir "$HOME\.provn\models"
+hf download ashvinctrl/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir "$HOME\.provn\models"
 llama-server -m "$HOME\.provn\models\provn-gemma4-e2b-q4km.gguf" --host 127.0.0.1 --port 8080
 provn server status
 ```
@@ -100,16 +103,48 @@ git add config.py && git commit -m "oops"
 ## Commands
 
 ```
-provn                    Status dashboard with layers, hook, and server state
-provn check <path>       Scan a file for secrets or IP leaks
-provn check --json <path>  Machine readable output for CI
-provn scan               Scan staged git changes (hook mode)
-provn server start       Start the Layer 3 AI model server
-provn server stop        Stop the Layer 3 AI model server
-provn server status      Check if Layer 3 is online
-provn install            Install the git pre commit hook
-provn verify-audit       Verify the HMAC audit log chain
+provn                          Status dashboard with layers, hook, and server state
+provn check <path>             Scan a file OR directory tree for secrets or IP leaks
+provn check --format sarif <p> SARIF 2.1.0 output for GitHub Code Scanning
+provn check --json <path>      Machine readable JSON for CI
+provn scan                     Scan staged git changes (pre-commit hook mode)
+provn scan --fail-on T0,T1     Exit non-zero on listed tiers, never prompt (CI-safe)
+provn scan --auto-redact       Redact blocked findings without prompting
+provn scan --json              Emit findings as JSON lines
+provn check-range <old> <new>  Scan a commit range (pre-push hook mode)
+provn scan-history             Scan all of git history for secrets ever committed
+provn baseline [path]          Accept current findings so only new ones are flagged
+provn server start|stop|status Manage the Layer 3 AI model server
+provn install [--pre-push]     Install the pre-commit hook (and optional push gate)
+provn verify-audit             Verify the HMAC audit log chain
 ```
+
+### Adopting Provn on an existing repo
+
+A repo with historical secrets or noisy fixtures shouldn't bury you in findings
+on day one:
+
+```bash
+provn baseline .          # accept everything currently present → .provn/baseline.json
+git add .provn/baseline.json && git commit -m "provn baseline"
+```
+
+From then on only **new** secrets are flagged. The baseline stores one-way
+hashes — never the secret itself — and rotating or changing any secret yields a
+new fingerprint that is reported again, so a baseline can never hide a *new*
+leak. Run `provn scan-history` to audit what's already buried in past commits.
+
+### Securing a repo before you push
+
+```bash
+provn install --pre-push   # pre-commit (fast feedback) + pre-push (full outgoing scan)
+provn check .              # scan the entire working tree on demand (respects .gitignore)
+```
+
+Pre-commit and pre-push hooks are bypassable with `git commit --no-verify`. The hard gate is CI:
+[`.github/workflows/provn-enforce.yml`](.github/workflows/provn-enforce.yml) scans every push and PR and
+blocks merge on T0/T1 findings, and [`provn-sarif.yml`](.github/workflows/provn-sarif.yml) uploads results
+to GitHub Code Scanning — so a bypassed hook never reaches `main`.
 
 
 ## How it works
@@ -118,12 +153,18 @@ Provn runs three detection layers in sequence:
 
 | Layer | Method | Latency | Catches |
 |-------|--------|---------|---------|
-| 1a | Regex patterns, 30+ Gitleaks rules + NFKC normalization | <5ms | AWS keys, OpenAI keys, private keys, tokens |
-| 1b | Shannon entropy analysis | <5ms | High-entropy strings in assignments |
-| 2  | Tree-sitter AST taint tracking | <50ms | `system_prompt = "..."` in Python / TS / JS |
+| 1a | Regex patterns — 45 built-in rules + NFKC normalization + split-string reassembly | <5ms | AWS/Azure/GCP keys, GitHub/GitLab tokens, Stripe/Square, Slack/Twilio/SendGrid, OpenAI/Anthropic/HF, DB URLs, private keys, mnemonics |
+| 1b | Shannon entropy analysis with per-extension thresholds + allowlist | <5ms | High-entropy strings in assignments, hex-encoded secrets |
+| 2  | Tree-sitter AST analysis | <50ms | `system_prompt = "..."`, `const apiKey = "..."` in Python / JS / TS / TSX |
 | 3  | Gemma 4 E2B (on-device, optional) | <800ms | Ambiguous IP leaks in the 0.4–0.8 confidence band |
 
-Layer 3 only activates for ambiguous cases. Confident detections from L1 and L2 skip it entirely.
+Layer 3 only activates for ambiguous cases. Confident detections from L1 and L2 skip it entirely. The built-in
+pattern set lives in [`provn-cli/patterns.toml`](provn-cli/patterns.toml) and can be overridden at runtime via
+`layers.regex.patterns_file` — no recompile needed.
+
+**Detection coverage** (measured by `provn-cli/tests/adversarial.rs`): 7/7 obfuscated-secret cases detected
+(base64, hex, comment, multiline, split-string, homoglyph, BIP39 mnemonic); 0 false positives across SHA-256
+checksums, UUIDs, bcrypt hashes, base64 PNG headers, and semver strings.
 
 **Risk tiers:**
 

@@ -1,6 +1,6 @@
 {
   "name": "provn-cli",
-  "version": "0.0.2",
+  "version": "0.2.0",
   "description": "AI-powered secret & IP leak detection \u2014 stops threats before they leave your machine",
   "keywords": [
     "security",
@@ -10,10 +10,10 @@
     "ai",
     "leak-detection"
   ],
-  "homepage": "https://github.com/kshitizz36/Provn",
+  "homepage": "https://github.com/ashvinctrl/Provn",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kshitizz36/Provn.git"
+    "url": "git+https://github.com/ashvinctrl/Provn.git"
   },
   "license": "MIT",
   "bin": {
@@ -26,7 +26,7 @@
     "node": ">=18"
   },
   "bugs": {
-    "url": "https://github.com/kshitizz36/Provn/issues"
+    "url": "https://github.com/ashvinctrl/Provn/issues"
   },
   "files": [
     "bin",

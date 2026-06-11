@@ -33,7 +33,7 @@ jobs:
         if: steps.tap_auth.outputs.enabled == 'true'
         id: sha
         run: |
-          BASE="https://github.com/kshitizz36/Provn/releases/download/${{ steps.release.outputs.tag }}"
+          BASE="https://github.com/ashvinctrl/Provn/releases/download/${{ steps.release.outputs.tag }}"
 
           download_sha() {
             local name=$1
@@ -50,7 +50,7 @@ jobs:
         if: steps.tap_auth.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
-          repository: kshitizz36/homebrew-tap
+          repository: ashvinctrl/homebrew-tap
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
           path: homebrew-tap
 

@@ -1,0 +1,395 @@
+# Provn built-in detection patterns.
+#
+# This file is embedded into the provn binary at compile time and loaded at
+# startup. To override or extend without recompiling, point
+# `layers.regex.patterns_file` in provn.yml at your own copy.
+#
+# Fields:
+#   id           unique pattern identifier (shown in findings)
+#   description  human-readable explanation
+#   tier         T0 critical | T1 high | T2 medium | T3 log-only
+#   confidence   0.0 - 1.0
+#   regex        Rust regex syntax (no lookaround / backreferences)
+#   redact       replacement token prefix used by auto-redaction
+#   secret_group capture group holding the secret itself (default: group 1 if
+#                present, else the whole match) — enables span-precise redaction
+
+# ── Cloud providers ───────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "aws_access_key"
+description = "AWS access key ID (long-term or STS)"
+tier = "T0"
+confidence = 0.98
+regex = '\b((?:AKIA|ASIA)[0-9A-Z]{16})\b'
+redact = "PROVN_REDACTED_AWS_KEY"
+
+[[patterns]]
+id = "aws_secret_key"
+description = "AWS secret access key near aws/secret context"
+tier = "T0"
+confidence = 0.95
+regex = "(?i)aws.{0,20}secret.{0,10}[\"']([A-Za-z0-9/+]{40})[\"']"
+redact = "PROVN_REDACTED_AWS_SECRET"
+
+[[patterns]]
+id = "google_api_key"
+description = "Google API key"
+tier = "T1"
+confidence = 0.97
+regex = '\b(AIza[0-9A-Za-z_\-]{35})\b'
+redact = "PROVN_REDACTED_GOOGLE_KEY"
+
+[[patterns]]
+id = "gcp_service_account"
+description = "GCP service account JSON key file contents"
+tier = "T0"
+confidence = 0.90
+regex = '"type"\s*:\s*"service_account"'
+redact = "PROVN_REDACTED_GCP_SA"
+
+[[patterns]]
+id = "azure_storage_key"
+description = "Azure storage account key (AccountKey= in connection string)"
+tier = "T0"
+confidence = 0.97
+regex = '(?i)AccountKey=([A-Za-z0-9+/=]{86,90})'
+redact = "PROVN_REDACTED_AZURE_KEY"
+
+[[patterns]]
+id = "azure_sas_token"
+description = "Azure SAS token (sv= ... &sig=)"
+tier = "T1"
+confidence = 0.85
+regex = '(?i)sv=\d{4}-\d{2}-\d{2}[^\s"]*&sig=([A-Za-z0-9%+/=]{20,})'
+redact = "PROVN_REDACTED_AZURE_SAS"
+
+[[patterns]]
+id = "digitalocean_pat"
+description = "DigitalOcean personal access token"
+tier = "T0"
+confidence = 0.98
+regex = '\b(dop_v1_[a-f0-9]{64})\b'
+redact = "PROVN_REDACTED_DO_PAT"
+
+[[patterns]]
+id = "alibaba_access_key"
+description = "Alibaba Cloud AccessKey ID"
+tier = "T0"
+confidence = 0.95
+regex = '\b(LTAI[A-Za-z0-9]{12,20})\b'
+redact = "PROVN_REDACTED_ALIBABA_AK"
+
+# ── Infrastructure ────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "vault_token"
+description = "HashiCorp Vault service token"
+tier = "T0"
+confidence = 0.97
+regex = '\b(hvs\.[A-Za-z0-9_\-]{24,})'
+redact = "PROVN_REDACTED_VAULT_TOKEN"
+
+[[patterns]]
+id = "kubeconfig_data"
+description = "Kubernetes client key/cert data in kubeconfig"
+tier = "T0"
+confidence = 0.90
+regex = '(?:client-key-data|client-certificate-data):\s*([A-Za-z0-9+/=]{100,})'
+redact = "PROVN_REDACTED_KUBECONFIG"
+
+[[patterns]]
+id = "private_key_block"
+description = "PEM private key block (RSA/EC/DSA/OpenSSH/PGP/PKCS#8)"
+tier = "T0"
+confidence = 0.99
+regex = '-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY'
+redact = "PROVN_REDACTED_PRIVATE_KEY"
+
+# ── Version control & registries ──────────────────────────────────────────────
+
+[[patterns]]
+id = "github_token"
+description = "GitHub token (classic PAT, OAuth, app, refresh)"
+tier = "T0"
+confidence = 0.97
+regex = '\b(gh[pousr]_[A-Za-z0-9]{36,})\b'
+redact = "PROVN_REDACTED_GITHUB_TOKEN"
+
+[[patterns]]
+id = "github_fine_grained_pat"
+description = "GitHub fine-grained personal access token"
+tier = "T0"
+confidence = 0.98
+regex = '\b(github_pat_[A-Za-z0-9_]{82})\b'
+redact = "PROVN_REDACTED_GITHUB_PAT"
+
+[[patterns]]
+id = "gitlab_pat"
+description = "GitLab personal access token"
+tier = "T0"
+confidence = 0.97
+regex = '\b(glpat-[A-Za-z0-9_\-=]{20,})'
+redact = "PROVN_REDACTED_GITLAB_PAT"
+
+[[patterns]]
+id = "npm_token"
+description = "npm granular/automation access token"
+tier = "T0"
+confidence = 0.97
+regex = '\b(npm_[A-Za-z0-9]{36})\b'
+redact = "PROVN_REDACTED_NPM_TOKEN"
+
+[[patterns]]
+id = "pypi_token"
+description = "PyPI upload token"
+tier = "T0"
+confidence = 0.98
+regex = '\b(pypi-AgEIcHlwaS5vcmc[A-Za-z0-9_\-]{50,})'
+redact = "PROVN_REDACTED_PYPI_TOKEN"
+
+# ── Databases ─────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "database_url"
+description = "Database connection string with embedded credentials"
+tier = "T0"
+confidence = 0.92
+regex = '(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?)://[^:@\s/]+:([^@\s]+)@[^\s]+'
+redact = "PROVN_REDACTED_DB_PASSWORD"
+secret_group = 1
+
+# ── Payment ───────────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "stripe_live_key"
+description = "Stripe live secret key"
+tier = "T0"
+confidence = 0.98
+regex = '\b(sk_live_[a-zA-Z0-9]{24,})'
+redact = "PROVN_REDACTED_STRIPE_KEY"
+
+[[patterns]]
+id = "stripe_restricted_key"
+description = "Stripe live restricted key"
+tier = "T0"
+confidence = 0.97
+regex = '\b(rk_live_[a-zA-Z0-9]{24,})'
+redact = "PROVN_REDACTED_STRIPE_RK"
+
+[[patterns]]
+id = "stripe_test_key"
+description = "Stripe test-mode secret key (informational)"
+tier = "T3"
+confidence = 0.95
+regex = '\b(sk_test_[a-zA-Z0-9]{24,})'
+redact = "PROVN_REDACTED_STRIPE_TEST"
+
+[[patterns]]
+id = "square_access_token"
+description = "Square access token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(sq0atp-[A-Za-z0-9_\-]{22})\b'
+redact = "PROVN_REDACTED_SQUARE_TOKEN"
+
+[[patterns]]
+id = "square_oauth_secret"
+description = "Square OAuth application secret"
+tier = "T0"
+confidence = 0.95
+regex = '\b(sq0csp-[A-Za-z0-9_\-]{43})\b'
+redact = "PROVN_REDACTED_SQUARE_SECRET"
+
+# ── Communication ─────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "slack_bot_token"
+description = "Slack bot/user/app token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(xox[baprs]-[0-9A-Za-z\-]{10,})'
+redact = "PROVN_REDACTED_SLACK_TOKEN"
+
+[[patterns]]
+id = "slack_webhook"
+description = "Slack incoming webhook URL"
+tier = "T1"
+confidence = 0.96
+regex = 'https://hooks\.slack\.com/services/(T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+)'
+redact = "PROVN_REDACTED_SLACK_WEBHOOK"
+
+[[patterns]]
+id = "sendgrid_api_key"
+description = "SendGrid API key"
+tier = "T0"
+confidence = 0.98
+regex = '\b(SG\.[A-Za-z0-9_\-]{20,24}\.[A-Za-z0-9_\-]{39,50})\b'
+redact = "PROVN_REDACTED_SENDGRID_KEY"
+
+[[patterns]]
+id = "mailgun_api_key"
+description = "Mailgun private API key"
+tier = "T1"
+confidence = 0.90
+regex = '\b(key-[a-f0-9]{32})\b'
+redact = "PROVN_REDACTED_MAILGUN_KEY"
+
+[[patterns]]
+id = "twilio_api_key"
+description = "Twilio API key SID"
+tier = "T1"
+confidence = 0.92
+regex = '\b(SK[a-f0-9]{32})\b'
+redact = "PROVN_REDACTED_TWILIO_KEY"
+
+[[patterns]]
+id = "telegram_bot_token"
+description = "Telegram bot token"
+tier = "T1"
+confidence = 0.95
+regex = '\b(\d{8,10}:AA[A-Za-z0-9_\-]{33})\b'
+redact = "PROVN_REDACTED_TELEGRAM_TOKEN"
+
+[[patterns]]
+id = "discord_webhook"
+description = "Discord webhook URL"
+tier = "T1"
+confidence = 0.95
+regex = 'https://discord(?:app)?\.com/api/webhooks/\d+/([A-Za-z0-9_\-]{60,})'
+redact = "PROVN_REDACTED_DISCORD_WEBHOOK"
+
+[[patterns]]
+id = "shopify_access_token"
+description = "Shopify private app access token"
+tier = "T0"
+confidence = 0.97
+regex = '\b(shpat_[a-fA-F0-9]{32})\b'
+redact = "PROVN_REDACTED_SHOPIFY_TOKEN"
+
+[[patterns]]
+id = "heroku_api_key"
+description = "Heroku API key (UUID near heroku context)"
+tier = "T1"
+confidence = 0.80
+regex = '(?i)heroku.{0,20}\b([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\b'
+redact = "PROVN_REDACTED_HEROKU_KEY"
+
+# ── AI / ML platforms ─────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "openai_api_key"
+description = "OpenAI API key"
+tier = "T1"
+confidence = 0.97
+regex = '\b(sk-(?:proj-|svcacct-)?[a-zA-Z0-9]{40,})'
+redact = "PROVN_REDACTED_OPENAI_KEY"
+
+[[patterns]]
+id = "anthropic_api_key"
+description = "Anthropic API key"
+tier = "T1"
+confidence = 0.97
+regex = '\b(sk-ant-[a-zA-Z0-9\-_]{40,})'
+redact = "PROVN_REDACTED_ANTHROPIC_KEY"
+
+[[patterns]]
+id = "huggingface_token"
+description = "Hugging Face user access token"
+tier = "T1"
+confidence = 0.95
+regex = '\b(hf_[a-zA-Z0-9]{34,})\b'
+redact = "PROVN_REDACTED_HF_TOKEN"
+
+[[patterns]]
+id = "replicate_token"
+description = "Replicate API token"
+tier = "T1"
+confidence = 0.95
+regex = '\b(r8_[A-Za-z0-9]{37,})\b'
+redact = "PROVN_REDACTED_REPLICATE_TOKEN"
+
+[[patterns]]
+id = "groq_api_key"
+description = "Groq API key"
+tier = "T1"
+confidence = 0.93
+regex = '\b(gsk_[A-Za-z0-9]{50,})\b'
+redact = "PROVN_REDACTED_GROQ_KEY"
+
+# ── Crypto assets ─────────────────────────────────────────────────────────────
+
+[[patterns]]
+id = "mnemonic_phrase"
+description = "BIP39-style mnemonic seed phrase assigned to a variable"
+tier = "T0"
+confidence = 0.85
+regex = "(?i)(?:mnemonic|seed[_\\-]?phrase)\\s*[=:]\\s*[\"']([a-z]+(?: [a-z]+){11,23})[\"']"
+redact = "PROVN_REDACTED_MNEMONIC"
+
+[[patterns]]
+id = "wif_private_key"
+description = "Bitcoin WIF private key (uncompressed)"
+tier = "T0"
+confidence = 0.80
+regex = '\b(5[HJK][1-9A-HJ-NP-Za-km-z]{49})\b'
+redact = "PROVN_REDACTED_WIF_KEY"
+
+# ── Generic / contextual ──────────────────────────────────────────────────────
+
+[[patterns]]
+id = "jwt_token"
+description = "JSON Web Token (header.payload.signature)"
+tier = "T1"
+confidence = 0.85
+regex = '\b(ey[A-Za-z0-9_\-]{10,}\.ey[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,})\b'
+redact = "PROVN_REDACTED_JWT"
+
+[[patterns]]
+id = "generic_api_key"
+description = "Generic api_key/apikey assignment"
+tier = "T1"
+confidence = 0.75
+regex = "(?i)(?:api[_\\-]?key|apikey)\\s*[=:]\\s*[\"']([\\w\\-]{20,})[\"']"
+redact = "PROVN_REDACTED_API_KEY"
+
+[[patterns]]
+id = "generic_client_secret"
+description = "Generic client_secret assignment (OAuth app secrets)"
+tier = "T1"
+confidence = 0.80
+regex = "(?i)client[_\\-]?secret\\s*[=:]\\s*[\"']([A-Za-z0-9_~.\\-]{20,})[\"']"
+redact = "PROVN_REDACTED_CLIENT_SECRET"
+
+[[patterns]]
+id = "password_in_code"
+description = "Hardcoded password assignment"
+tier = "T0"
+confidence = 0.82
+regex = "(?i)(?:password|passwd|pwd)\\s*=\\s*[\"']([^\"']{8,})[\"']"
+redact = "PROVN_REDACTED_PASSWORD"
+
+[[patterns]]
+id = "system_prompt_var"
+description = "System prompt assignment (possible IP/prompt leak)"
+tier = "T1"
+confidence = 0.80
+regex = "(?i)system_prompt\\s*[=:]\\s*[\"'](.{30,})"
+redact = "PROVN_REDACTED_SYSTEM_PROMPT"
+
+[[patterns]]
+id = "hex_encoded_secret"
+description = "Hex blob assigned to a key/secret/token variable (possible hex-encoded secret; pure hex evades entropy detection)"
+tier = "T2"
+confidence = 0.70
+regex = "(?i)(?:key|secret|token|passwd|password|credential)\\w*\\s*[=:]\\s*[\"']([a-fA-F0-9]{32,})[\"']"
+redact = "PROVN_REDACTED_HEX_SECRET"
+
+[[patterns]]
+id = "basic_auth_url"
+description = "URL with embedded basic-auth credentials"
+tier = "T1"
+confidence = 0.85
+regex = 'https?://[^:@\s/]+:([^@\s/]{6,})@[^\s]+'
+redact = "PROVN_REDACTED_URL_CREDS"
+secret_group = 1

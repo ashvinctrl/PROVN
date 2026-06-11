@@ -1,13 +1,13 @@
 # Provn
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/kshitizz36/Provn/main/docs/images/provn-logo.png" alt="Provn terminal screenshot" width="560" />
+  <img src="https://raw.githubusercontent.com/ashvinctrl/Provn/main/docs/images/provn-logo.png" alt="Provn terminal screenshot" width="560" />
 </p>
 
 <p align="center"><strong>AI powered secret and IP leak detection that runs before code leaves your machine.</strong></p>
 
 <p align="center"><code>npm install -g provn-cli</code></p>
-<p align="center"><code>brew install kshitizz36/tap/provn</code></p>
+<p align="center"><code>brew install ashvinctrl/tap/provn</code></p>
 
 Provn is a local first pre commit scanner that blocks secrets, API keys, tokens, private keys, and proprietary snippets before they land in git. Layer 1 and Layer 2 work immediately. Layer 3 AI is optional and installs separately.
 
@@ -20,11 +20,11 @@ npm install -g provn-cli
 ```
 
 ```bash
-brew install kshitizz36/tap/provn
+brew install ashvinctrl/tap/provn
 ```
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kshitizz36/Provn/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ashvinctrl/Provn/main/install.sh | bash
 ```
 
 ### Quick start without cloning
@@ -41,7 +41,7 @@ git commit -m "first protected commit"
 You do **not** need to clone the Provn repo to use Layer 3. Install the CLI first, then download the model separately from Hugging Face.
 
 Model page:
-[https://huggingface.co/kshitizz36/provn-gemma4-e2b-q4km](https://huggingface.co/kshitizz36/provn-gemma4-e2b-q4km)
+[https://huggingface.co/ashvinctrl/provn-gemma4-e2b-q4km](https://huggingface.co/ashvinctrl/provn-gemma4-e2b-q4km)
 
 **macOS / Linux**
 
@@ -49,7 +49,7 @@ Model page:
 brew install hf
 hf auth login
 mkdir -p ~/.provn/models
-hf download kshitizz36/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models
+hf download ashvinctrl/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models
 llama-server -m ~/.provn/models/provn-gemma4-e2b-q4km.gguf --host 127.0.0.1 --port 8080
 provn server status
 ```
@@ -60,7 +60,7 @@ provn server status
 pip install "huggingface_hub[cli]"
 hf auth login
 New-Item -ItemType Directory -Force "$HOME\.provn\models"
-hf download kshitizz36/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir "$HOME\.provn\models"
+hf download ashvinctrl/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir "$HOME\.provn\models"
 llama-server -m "$HOME\.provn\models\provn-gemma4-e2b-q4km.gguf" --host 127.0.0.1 --port 8080
 provn server status
 ```

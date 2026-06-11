@@ -140,7 +140,7 @@ jobs:
             echo
             echo "**Homebrew**"
             echo '```bash'
-            echo "brew install kshitizz36/tap/provn"
+            echo "brew install ashvinctrl/tap/provn"
             echo '```'
             echo
             echo "**Windows**"

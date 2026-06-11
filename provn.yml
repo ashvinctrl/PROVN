@@ -68,6 +68,9 @@ tiers:
 layers:
   regex:
     enabled: true
+    # Optional: replace the built-in pattern set at runtime (no recompile).
+    # Copy provn-cli/patterns.toml, edit, and point at it here.
+    # patterns_file: ".provn/patterns.toml"
     # Uses built-in Gitleaks-compatible patterns + any custom_patterns below
     # Custom user-defined patterns — checked after built-in patterns.
     # Add regex rules to catch proprietary code, internal imports, copyright violations, etc.
@@ -98,6 +101,16 @@ layers:
     enabled: true
     threshold: 4.5
     min_length: 20
+    # Per-extension threshold overrides. Minified/bundled formats deserve a
+    # higher bar; config formats where secrets actually live get a lower one.
+    # Built-in defaults: env/yaml/tf/ini/toml → 4.2, json/md → 5.0, lock/map → 5.5
+    # per_extension_thresholds:
+    #   "min.js": 5.5
+    #   "env": 4.0
+    # Regex allowlist — matching tokens are never flagged by the entropy layer
+    # (e.g. known test fixture hashes).
+    # allowlist:
+    #   - "^TEST_FIXTURE_"
   ast:
     enabled: true
     languages: ["python", "typescript", "javascript"]
@@ -127,6 +140,13 @@ redaction:
   preview: true
   # Prefix for replacement tokens
   token_prefix: "PROVN_REDACTED_"
+
+# Accepted-findings baseline
+# `provn baseline` writes fingerprints (SHA-256, never the secret) of all
+# current findings here; later scans suppress them so only NEW secrets are
+# flagged. A changed/rotated secret produces a new fingerprint and is reported
+# again. Commit this file so the whole team shares the same accepted set.
+baseline_path: ".provn/baseline.json"
 
 # Audit logging
 audit:

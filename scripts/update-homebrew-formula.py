@@ -6,7 +6,7 @@ import sys
 
 def replace_sha(text: str, asset: str, sha: str) -> str:
     pattern = (
-        rf'(url "https://github.com/kshitizz36/Provn/releases/download/v#\{{version\}}/'
+        rf'(url "https://github.com/ashvinctrl/Provn/releases/download/v#\{{version\}}/'
         rf'{re.escape(asset)}"\n\s*sha256 )"[^"]+"'
     )
     updated, count = re.subn(pattern, rf'\1"{sha}"', text, count=1)

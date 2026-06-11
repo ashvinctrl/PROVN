@@ -11,7 +11,7 @@ const path = require("path");
 const os = require("os");
 const { execSync } = require("child_process");
 
-const REPO = "kshitizz36/Provn";
+const REPO = "ashvinctrl/Provn";
 const BIN_DIR = path.join(__dirname, "bin");
 
 function getArtifact() {
