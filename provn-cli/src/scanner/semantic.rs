@@ -1,9 +1,9 @@
-use std::time::Duration;
 use serde::Deserialize;
+use std::time::Duration;
 
 pub struct SemanticResult {
-    pub label: String,  // "leak" or "clean"
-    pub skipped: bool,  // true if server unavailable or timed out
+    pub label: String, // "leak" or "clean"
+    pub skipped: bool, // true if server unavailable or timed out
 }
 
 const SYSTEM: &str = "You are a code security classifier. \
@@ -61,7 +61,10 @@ pub fn classify(code: &str, endpoint: &str, timeout_ms: u64) -> SemanticResult {
         Ok(resp) => match resp.json::<ChatResponse>() {
             Ok(cr) => match cr.choices.first() {
                 Some(choice) => match parse_label(&choice.message.content) {
-                    Some(label) => SemanticResult { label: label.into(), skipped: false },
+                    Some(label) => SemanticResult {
+                        label: label.into(),
+                        skipped: false,
+                    },
                     None => skipped(),
                 },
                 None => skipped(),
@@ -73,7 +76,10 @@ pub fn classify(code: &str, endpoint: &str, timeout_ms: u64) -> SemanticResult {
 }
 
 fn skipped() -> SemanticResult {
-    SemanticResult { label: "clean".into(), skipped: true }
+    SemanticResult {
+        label: "clean".into(),
+        skipped: true,
+    }
 }
 
 fn parse_label(content: &str) -> Option<&'static str> {

@@ -14,7 +14,7 @@ const binary = path.join(__dirname, isWindows ? "provn.exe" : "provn");
 if (!fs.existsSync(binary)) {
   console.error("Provn binary is missing from the npm install.");
   console.error("Reinstall after a release is published, or build from source:");
-  console.error("  https://github.com/kshitizz36/Provn#install");
+  console.error("  https://github.com/ashvinctrl/Provn#install");
   process.exit(1);
 }
 

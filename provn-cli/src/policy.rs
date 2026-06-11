@@ -38,4 +38,3 @@ pub fn determine_verdict(result: &ScanResult, _cfg: &crate::config::Config) -> V
         _ => Verdict::Allow,
     }
 }
-

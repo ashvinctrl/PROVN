@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="kshitizz36/Provn"
+REPO="ashvinctrl/Provn"
 BIN_NAME="provn"
 INSTALL_DIR="/usr/local/bin"
 

@@ -32,6 +32,11 @@ pub struct Config {
     /// Example: ["git@github.com:mycompany/*", "https://github.com/mycompany/*"]
     #[serde(default)]
     pub allowed_remotes: Vec<String>,
+
+    /// Path to the accepted-findings baseline. Findings whose fingerprint is
+    /// recorded here are suppressed (see baseline.rs).
+    #[serde(default = "default_baseline_path")]
+    pub baseline_path: String,
 }
 
 /// A user-defined regex pattern in provn.yml
@@ -68,6 +73,10 @@ pub struct LayersConfig {
 pub struct RegexConfig {
     #[serde(default = "bool_true")]
     pub enabled: bool,
+    /// Optional path to a patterns.toml that replaces the built-in pattern set
+    /// at runtime (no recompile needed). Invalid files fall back to built-ins.
+    #[serde(default)]
+    pub patterns_file: Option<String>,
     /// User-defined patterns — checked after built-in patterns
     #[serde(default)]
     pub custom_patterns: Vec<CustomPattern>,
@@ -75,7 +84,11 @@ pub struct RegexConfig {
 
 impl Default for RegexConfig {
     fn default() -> Self {
-        Self { enabled: true, custom_patterns: Vec::new() }
+        Self {
+            enabled: true,
+            patterns_file: None,
+            custom_patterns: Vec::new(),
+        }
     }
 }
 
@@ -125,6 +138,14 @@ pub struct EntropyConfig {
     pub threshold: f64,
     #[serde(default = "default_min_length")]
     pub min_length: usize,
+    /// Per-file-extension threshold overrides (e.g. "lock" → 5.5).
+    /// Takes precedence over built-in extension defaults and `threshold`.
+    #[serde(default)]
+    pub per_extension_thresholds: std::collections::HashMap<String, f64>,
+    /// Regex patterns; matching tokens are never flagged by the entropy layer
+    /// (e.g. known test fixture hashes).
+    #[serde(default)]
+    pub allowlist: Vec<String>,
 }
 
 impl Default for EntropyConfig {
@@ -133,6 +154,8 @@ impl Default for EntropyConfig {
             enabled: true,
             threshold: 4.5,
             min_length: 20,
+            per_extension_thresholds: Default::default(),
+            allowlist: Vec::new(),
         }
     }
 }
@@ -153,7 +176,6 @@ impl Default for AstConfig {
         }
     }
 }
-
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AuditConfig {
@@ -192,6 +214,7 @@ impl Default for Config {
             layers: LayersConfig::default(),
             audit: AuditConfig::default(),
             allowed_remotes: Vec::new(),
+            baseline_path: default_baseline_path(),
         }
     }
 }
@@ -207,23 +230,59 @@ pub fn load() -> Result<Config, ConfigError> {
 }
 
 // Serde defaults
-fn default_mode() -> String { "enforce".to_string() }
-fn bool_true() -> bool { true }
-fn default_entropy_threshold() -> f64 { 4.5 }
-fn default_min_length() -> usize { 20 }
+fn default_mode() -> String {
+    "enforce".to_string()
+}
+fn bool_true() -> bool {
+    true
+}
+fn default_entropy_threshold() -> f64 {
+    4.5
+}
+fn default_min_length() -> usize {
+    20
+}
 fn default_sensitive_vars() -> Vec<String> {
     vec![
-        "system_prompt".into(), "api_key".into(), "secret".into(),
-        "password".into(), "token".into(), "private_key".into(), "credentials".into(),
+        "system_prompt".into(),
+        "api_key".into(),
+        "secret".into(),
+        "password".into(),
+        "token".into(),
+        "private_key".into(),
+        "credentials".into(),
     ]
 }
-fn default_audit_path() -> String { ".provn/audit.jsonl".to_string() }
-fn default_hmac_key_path() -> String { ".provn/hmac.key".to_string() }
-fn default_semantic_model() -> String { "provn-gemma4-e2b-q4km.gguf".to_string() }
-fn default_semantic_endpoint() -> String { "http://localhost:8080".to_string() }
-fn default_semantic_timeout() -> u64 { 2000 }
-fn default_semantic_fallback() -> String { "layer1".to_string() }
-fn default_ambiguous_low() -> f64 { 0.4 }
-fn default_ambiguous_high() -> f64 { 0.8 }
-fn default_tier_t1() -> String { "T1".to_string() }
-fn default_custom_confidence() -> f64 { 0.80 }
+fn default_audit_path() -> String {
+    ".provn/audit.jsonl".to_string()
+}
+fn default_hmac_key_path() -> String {
+    ".provn/hmac.key".to_string()
+}
+fn default_baseline_path() -> String {
+    ".provn/baseline.json".to_string()
+}
+fn default_semantic_model() -> String {
+    "provn-gemma4-e2b-q4km.gguf".to_string()
+}
+fn default_semantic_endpoint() -> String {
+    "http://localhost:8080".to_string()
+}
+fn default_semantic_timeout() -> u64 {
+    2000
+}
+fn default_semantic_fallback() -> String {
+    "layer1".to_string()
+}
+fn default_ambiguous_low() -> f64 {
+    0.4
+}
+fn default_ambiguous_high() -> f64 {
+    0.8
+}
+fn default_tier_t1() -> String {
+    "T1".to_string()
+}
+fn default_custom_confidence() -> f64 {
+    0.80
+}

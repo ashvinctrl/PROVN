@@ -1,0 +1,51 @@
+# Provn two-layer enforcement model:
+#   Layer A — pre-commit/pre-push hooks: fast local feedback, but bypassable
+#             with `git commit --no-verify`.
+#   Layer B — this workflow: the hard gate. Runs on every push and PR and
+#             blocks merge on T0/T1 findings, so --no-verify never reaches main.
+name: Provn Enforce
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  enforce:
+    name: Block T0/T1 findings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            provn-cli/target
+          key: ${{ runner.os }}-cargo-enforce-${{ hashFiles('provn-cli/Cargo.lock') }}
+
+      - name: Build Provn
+        run: cd provn-cli && cargo build --release
+
+      - name: Scan commit range
+        run: |
+          set -o pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            OLD="${{ github.event.pull_request.base.sha }}"
+            NEW="${{ github.event.pull_request.head.sha }}"
+          else
+            OLD="${{ github.event.before }}"
+            NEW="${{ github.sha }}"
+          fi
+          echo "Scanning range $OLD..$NEW"
+          ./provn-cli/target/release/provn check-range "$OLD" "$NEW" --json

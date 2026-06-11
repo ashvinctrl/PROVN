@@ -13,7 +13,7 @@ Postponed for now:
 - 3D office / Claw3D work
 - any monitoring UI that is not required for the CLI
 
-Read [PROJECT.md](/Users/kshitiz./Programming/aegis/PROJECT.md) for the current CLI-only plan.
+Read [PROJECT.md](PROJECT.md) for the current CLI-only plan.
 
 ## Repository Structure
 - `provn-cli/` — Rust CLI, pre-commit hook, audit chain, local model integration
@@ -79,14 +79,19 @@ cd aegis-model && modal run modal_finetune.py
 - regex = "1"
 - serde = { version = "1", features = ["derive"] }
 - serde_json = "1"
-- sha2 = "0.10"
-- ed25519-dalek = "2"
+- serde_yaml = "0.9"
+- toml = "0.8"            # parses the runtime-loadable patterns.toml
+- sha2 = "0.10", hmac = "0.12", hex = "0.4"   # HMAC audit chain
 - tree-sitter = "0.24"
 - tree-sitter-python = "0.23"
 - tree-sitter-javascript = "0.23"
-- tokio = { version = "1", features = ["full"] }
+- tree-sitter-typescript = "0.23"   # TS + TSX grammars
 - chrono = "0.4"
-- hex = "0.4"
+- once_cell = "1", unicode-normalization = "0.1", thiserror = "1"
+- reqwest = "0.12" (blocking) — Layer 3 HTTP client
+- libc = "0.2" (macOS only) — launchd uid lookup
+
+Note: `tokio` and `ed25519-dalek` were removed in 0.1.0 (unused); `uuid` is a dev-dependency.
 
 ## Reference Projects
 - Gitleaks: https://github.com/gitleaks/gitleaks
