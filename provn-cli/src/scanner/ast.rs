@@ -111,14 +111,7 @@ fn check_binding(node: Node, src: &[u8], cfg: &AstConfig) -> Option<AstMatch> {
         return None;
     }
 
-    if inner.starts_with("test_")
-        || inner.starts_with("fake_")
-        || inner.starts_with("placeholder")
-        || inner.starts_with("${")            // template placeholder, not a literal secret
-        || inner.starts_with("{{")            // jinja/handlebars placeholder
-        || inner == "your_api_key_here"
-        || inner == "xxx"
-    {
+    if super::is_placeholder_value(inner) {
         return None;
     }
 
@@ -269,5 +262,53 @@ mod tests {
             r#"greeting = "Hello, World! This is a long enough string to trigger length checks.""#;
         let results = scan_source(src, "python", &default_cfg());
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn detects_encryption_key_with_default_config() {
+        // `encryption_key` isn't a substring of any base name; it's caught via
+        // the credential-key names added to the shipped default config.
+        let src = concat!(
+            "encryption_key = \"EXAMPLEfake_aes_key_012345",
+            "6789abcdef0123456789ab\""
+        ); // provn:allow
+        let results = scan_source(src, "python", &AstConfig::default());
+        assert_eq!(
+            results.len(),
+            1,
+            "encryption_key assignment must be detected"
+        );
+        assert_eq!(results[0].var_name, "encryption_key");
+    }
+
+    #[test]
+    fn skips_angle_bracket_placeholder() {
+        let src = r#"password = "<YOUR_PASSWORD>""#; // provn:allow
+        let results = scan_source(src, "python", &default_cfg());
+        assert!(results.is_empty(), "<...> placeholders must be skipped");
+    }
+
+    #[test]
+    fn skips_your_x_here_placeholder() {
+        let src = r#"api_key = "your-api-key-here""#; // provn:allow
+        let results = scan_source(src, "python", &default_cfg());
+        assert!(
+            results.is_empty(),
+            "your-...-here placeholders must be skipped"
+        );
+    }
+
+    #[test]
+    fn benign_key_names_are_not_flagged() {
+        // Common non-credential `*_key` names must stay clean even with long
+        // literal values — they are not in the credential-name list.
+        for src in [
+            r#"primary_key = "user_id_column_name""#,   // provn:allow
+            r#"cache_key = "user:1234:profile:v2""#,    // provn:allow
+            r#"partition_key = "tenant-acme-2026-q2""#, // provn:allow
+        ] {
+            let results = scan_source(src, "python", &AstConfig::default());
+            assert!(results.is_empty(), "benign key name flagged: {src}");
+        }
     }
 }

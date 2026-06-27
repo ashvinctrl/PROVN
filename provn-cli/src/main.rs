@@ -118,6 +118,18 @@ enum Command {
         #[command(subcommand)]
         action: ServerAction,
     },
+    /// Measure detection accuracy against a labeled LeakBench corpus (JSONL)
+    Bench {
+        /// Path to the corpus JSONL (default: bundled tests/corpus/leakbench.jsonl)
+        #[arg(value_name = "CORPUS", default_value = "tests/corpus/leakbench.jsonl")]
+        corpus: String,
+        /// Output the report as JSON instead of text
+        #[arg(long, short = 'j')]
+        json: bool,
+        /// Extension each snippet is scanned as (sets entropy thresholds + AST language)
+        #[arg(long, default_value = "py")]
+        ext: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -177,6 +189,7 @@ fn run() -> i32 {
         Some(Command::VerifyAudit) => cmd_verify_audit(),
         Some(Command::Install { pre_push }) => cmd_install(pre_push),
         Some(Command::Server { action }) => cmd_server(action),
+        Some(Command::Bench { corpus, json, ext }) => cmd_bench(&corpus, json, &ext),
     }
 }
 
@@ -627,6 +640,218 @@ fn print_block(result: &scanner::ScanResult, tier: &str) {
 }
 
 // ── Check ──────────────────────────────────────────────────────────────────────
+#[derive(serde::Deserialize)]
+struct BenchSample {
+    code: String,
+    label: String,
+    /// "secret" (credential — Layer 1+2's job) or "ip" (proprietary logic /
+    /// prompt — only the optional Layer 3 model catches these). Absent on clean
+    /// samples. Lets the report separate what the offline layers are responsible
+    /// for from what needs the model.
+    #[serde(default)]
+    category: Option<String>,
+}
+
+/// First non-empty line of a snippet, truncated — used to name misses/false alarms.
+fn snippet_label(code: &str) -> String {
+    code.lines()
+        .find(|l| !l.trim().is_empty())
+        .unwrap_or("")
+        .chars()
+        .take(80)
+        .collect()
+}
+
+fn cmd_bench(corpus: &str, json: bool, ext: &str) -> i32 {
+    let content = match std::fs::read_to_string(corpus) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  {RED}error{RESET}  cannot read corpus {corpus}: {e}");
+            return 2;
+        }
+    };
+
+    // Deterministic, offline benchmark: Layer 1+2 only. Disabling the semantic
+    // layer keeps the result reproducible on any machine with no model server,
+    // and the regex/AST layers are rule-based so the full corpus is a valid
+    // evaluation set for them (nothing is trained on it).
+    let mut cfg = config::load().unwrap_or_default();
+    cfg.layers.semantic.enabled = false;
+
+    let (mut tp, mut misses, mut fp, mut tn) = (0u32, 0u32, 0u32, 0u32);
+    // Recall split by category: secrets are the offline layers' responsibility,
+    // IP/prompt leaks need the optional Layer 3 model.
+    let (mut secret_tp, mut secret_total) = (0u32, 0u32);
+    let (mut ip_tp, mut ip_total) = (0u32, 0u32);
+    let mut latencies_us: Vec<u128> = Vec::new();
+    let mut skipped = 0u32;
+    let mut missed_leaks: Vec<String> = Vec::new();
+    let mut false_alarms: Vec<String> = Vec::new();
+
+    for (i, line) in content.lines().enumerate() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        let sample: BenchSample = match serde_json::from_str(line) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("  {YELLOW}warn{RESET}  corpus line {} skipped: {e}", i + 1);
+                skipped += 1;
+                continue;
+            }
+        };
+        let is_leak = sample.label.eq_ignore_ascii_case("leak");
+        let is_clean = sample.label.eq_ignore_ascii_case("clean");
+        if !is_leak && !is_clean {
+            eprintln!(
+                "  {YELLOW}warn{RESET}  corpus line {} has unknown label '{}', skipped",
+                i + 1,
+                sample.label
+            );
+            skipped += 1;
+            continue;
+        }
+
+        let start = std::time::Instant::now();
+        let findings = scanner::scan_snippet(&sample.code, ext, &cfg);
+        latencies_us.push(start.elapsed().as_micros());
+        let flagged = !findings.is_empty();
+
+        if is_leak {
+            let is_secret = sample.category.as_deref() == Some("secret");
+            if is_secret {
+                secret_total += 1;
+            } else {
+                ip_total += 1;
+            }
+            if flagged {
+                tp += 1;
+                if is_secret {
+                    secret_tp += 1;
+                } else {
+                    ip_tp += 1;
+                }
+            } else {
+                misses += 1;
+                missed_leaks.push(snippet_label(&sample.code));
+            }
+        } else if flagged {
+            fp += 1;
+            false_alarms.push(snippet_label(&sample.code));
+        } else {
+            tn += 1;
+        }
+    }
+
+    let leaks = tp + misses;
+    let cleans = fp + tn;
+    let total = leaks + cleans;
+    if total == 0 {
+        eprintln!("  {RED}error{RESET}  corpus {corpus} has no usable samples");
+        return 2;
+    }
+
+    let rate = |num: u32, den: u32| -> f64 {
+        if den > 0 {
+            num as f64 / den as f64
+        } else {
+            0.0
+        }
+    };
+    let recall = rate(tp, leaks);
+    let secret_recall = rate(secret_tp, secret_total);
+    let ip_recall = rate(ip_tp, ip_total);
+    let fpr = rate(fp, cleans);
+    let precision = rate(tp, tp + fp);
+
+    latencies_us.sort_unstable();
+    let pct = |q: f64| -> f64 {
+        if latencies_us.is_empty() {
+            return 0.0;
+        }
+        let idx = (((latencies_us.len() - 1) as f64) * q).round() as usize;
+        latencies_us[idx] as f64 / 1000.0 // microseconds → milliseconds
+    };
+    let p50 = pct(0.50);
+    let p95 = pct(0.95);
+
+    if json {
+        let round3 = |x: f64| (x * 1000.0).round() / 1000.0;
+        let round2 = |x: f64| (x * 100.0).round() / 100.0;
+        println!(
+            "{}",
+            serde_json::json!({
+                "corpus": corpus,
+                "samples": total,
+                "leaks": leaks,
+                "clean": cleans,
+                "tp": tp, "fn": misses, "fp": fp, "tn": tn,
+                "recall": round3(recall),
+                "secret_recall": round3(secret_recall),
+                "secret_total": secret_total,
+                "ip_recall": round3(ip_recall),
+                "ip_total": ip_total,
+                "fpr": round3(fpr),
+                "precision": round3(precision),
+                "p50_ms": round2(p50),
+                "p95_ms": round2(p95),
+                "skipped": skipped,
+            })
+        );
+        return 0;
+    }
+
+    println!();
+    println!("  {BOLD}LeakBench — Layer 1+2 (offline){RESET}");
+    println!("  {}", dim!(corpus));
+    println!();
+    println!("  samples       {total}  ({leaks} leak, {cleans} clean)");
+    println!(
+        "  secret recall {GREEN}{:.1}%{RESET}  ({secret_tp}/{secret_total} credential leaks — offline layers' job)",
+        secret_recall * 100.0
+    );
+    println!(
+        "  ip recall     {:.1}%  ({ip_tp}/{ip_total} proprietary/prompt leaks — needs Layer 3)",
+        ip_recall * 100.0
+    );
+    println!(
+        "  overall       {:.1}%  ({tp}/{leaks} leaks, Layer 3 off)",
+        recall * 100.0
+    );
+    println!(
+        "  FPR           {}{:.1}%{RESET}  ({fp}/{cleans} clean flagged)",
+        if fp == 0 { GREEN } else { YELLOW },
+        fpr * 100.0
+    );
+    println!("  precision     {:.1}%", precision * 100.0);
+    println!(
+        "  latency       p50 {p50:.2}ms · p95 {p95:.2}ms  {}",
+        dim!("per snippet, incl. pattern compile")
+    );
+    if skipped > 0 {
+        println!("  {YELLOW}{skipped} line(s) skipped (parse/label errors){RESET}");
+    }
+    print_bench_list("missed leaks", &missed_leaks);
+    print_bench_list("false alarms", &false_alarms);
+    println!();
+    0
+}
+
+fn print_bench_list(title: &str, items: &[String]) {
+    if items.is_empty() {
+        return;
+    }
+    println!();
+    println!("  {YELLOW}{title} ({}):{RESET}", items.len());
+    for item in items.iter().take(10) {
+        println!("    {}", dim!(item));
+    }
+    if items.len() > 10 {
+        println!("    {}", dim!(format!("... and {} more", items.len() - 10)));
+    }
+}
+
 fn cmd_check(file: &str, fmt: &str, no_baseline: bool) -> i32 {
     let cfg = config::load().unwrap_or_default();
     let json = fmt.eq_ignore_ascii_case("json");

@@ -20,6 +20,10 @@ exclude_dirs:
   - __pycache__
   - .venv
   - target
+  # Benchmark fixtures: labelled JSONL corpora of intentionally-fake secrets.
+  # Provn must not scan (or self-block on) its own test data — see
+  # provn-cli/tests/corpus/.
+  - corpus
 
 # Skip these files
 exclude_files:
@@ -123,6 +127,11 @@ layers:
       - token
       - private_key
       - credentials
+      - encryption_key
+      - access_key
+      - signing_key
+      - session_key
+      - master_key
   semantic:
     enabled: true
     # Only triggered when Layer 1/2 confidence is ambiguous (0.4-0.8)

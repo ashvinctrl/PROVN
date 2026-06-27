@@ -1,12 +1,29 @@
 #!/bin/bash
-# Run the full LeakBench evaluation suite
-# Usage: ./scripts/run-leakbench.sh
+# Run the LeakBench evaluation: deterministic Layer 1+2 detection metrics over
+# the committed corpus. Reproduces the numbers reported in the README.
+#
+# Usage: ./scripts/run-leakbench.sh [corpus.jsonl]
 
-set -e
+set -euo pipefail
 
 cd "$(dirname "$0")/../provn-cli"
-cargo test -- leakbench --nocapture 2>&1 || true
+
+echo "Building provn (release)..."
+cargo build --release --quiet
+
+if [ "$#" -gt 0 ]; then
+    # Explicit corpus path → run just that one.
+    echo ""
+    echo "Running LeakBench (Layer 1+2, offline): $1"
+    ./target/release/provn bench "$1"
+else
+    for corpus in tests/corpus/realistic.jsonl tests/corpus/leakbench.jsonl; do
+        echo ""
+        echo "Running LeakBench (Layer 1+2, offline): $corpus"
+        ./target/release/provn bench "$corpus"
+    done
+fi
 
 echo ""
-echo "Running LeakBench against eval set..."
-python3 ../aegis-model/leakbench_eval.py 2>/dev/null || echo "(model not available — Layer 1+2 only)"
+echo "Regression gate:"
+cargo test --release --test leakbench --quiet

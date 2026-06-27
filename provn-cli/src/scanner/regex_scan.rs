@@ -172,6 +172,14 @@ fn scan_view(text: &str, patterns: &[CompiledPattern], collapsed: bool) -> Vec<R
                     .map(|m| m.as_str().to_string())
             };
 
+            // Skip obvious placeholders (e.g. `password = "<YOUR_PASSWORD>"`).
+            // Real-format keys never match these forms, so this only suppresses
+            // the generic/contextual rules where the captured value is the
+            // user's literal string.
+            if secret.as_deref().is_some_and(super::is_placeholder_value) {
+                continue;
+            }
+
             matches.push(RegexMatch {
                 pattern_name: pattern.id.clone(),
                 tier: pattern.tier.clone(),
@@ -291,8 +299,10 @@ mod tests {
              vec!["pypi-othertoken"]),
             ("database_url",
              vec!["postgresql://admin:s3cr3tpass@db.internal:5432/main", // provn:allow
-                  "mongodb+srv://user:hunter22@cluster0.example.mongodb.net/db"], // provn:allow
-             vec!["postgresql://db.internal:5432/main"]),
+                  "mongodb+srv://user:hunter22@cluster0.example.mongodb.net/db", // provn:allow
+                  "redis://:Red1sP4ss@cache.prod.internal:6379/0"], // provn:allow — password-only auth
+             vec!["postgresql://db.internal:5432/main",
+                  "redis://localhost:6379/0"]),
             ("stripe_live_key",
              vec![concat!("sk_live_abcdefghijkl", "mnopqrstuvwx"), // provn:allow
                   concat!("STRIPE_KEY=sk_live_4eC39HqLyjWD", "arjtT1zdp7dc")], // provn:allow
@@ -447,6 +457,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn skips_placeholder_password_assignments() {
+        // The generic password rule would otherwise flag documentation
+        // placeholders; the shared placeholder filter suppresses them.
+        for case in [
+            r#"password = "<YOUR_PASSWORD>""#,
+            r#"password = "${DB_PASSWORD}""#,
+            r#"password = "your-password-here""#,
+        ] {
+            assert!(hits(case).is_empty(), "placeholder wrongly flagged: {case}");
+        }
+        // A real hardcoded password still matches.
+        assert!(
+            pattern_ids(r#"password = "Pr0dDbP@ssw0rd2025""#) // provn:allow
+                .iter()
+                .any(|m| m == "password_in_code")
+        );
     }
 
     #[test]

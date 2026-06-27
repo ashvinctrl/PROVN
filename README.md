@@ -267,12 +267,54 @@ secret = os.getenv("SECRET")  # provn:allow
 
 ## Performance
 
-| Metric | Target | Status |
-|--------|--------|--------|
-| Recall | ≥ 97% | ✓ 97.0% |
-| FPR | ≤ 1.2% | ✓ 1.2% |
-| p50 latency | ≤ 30ms | ✓ |
-| p95 latency | ≤ 50ms | ✓ |
+Detection accuracy is measured by `provn bench` against two committed corpora.
+Reproduce both:
+
+```bash
+cd provn-cli
+cargo run --release -- bench tests/corpus/realistic.jsonl
+cargo run --release -- bench tests/corpus/leakbench.jsonl
+# or, with the regression gate: ./scripts/run-leakbench.sh
+```
+
+All numbers below are the deterministic layers only (Layer 1+2, semantic model
+off), measured 2026-06-27.
+
+**Realistic corpus** ([`realistic.jsonl`](provn-cli/tests/corpus/realistic.jsonl)
+— 70 samples: 30 real-format secrets + 40 secret-adjacent clean snippets). This
+is the representative real-world signal:
+
+| Metric | Value |
+|--------|-------|
+| Secret recall | **100%** (30/30) |
+| Precision | **100%** |
+| False positive rate | 0% (0/40) |
+| Engine latency | sub-millisecond per snippet |
+
+These numbers are on a small representative corpus, not a guarantee of perfect
+coverage on every real secret — but the gaps an earlier run surfaced are now
+closed: password-only `redis://:pass@…` URLs, `encryption_key`-style variable
+names, and the `your-api-key-here` / `<YOUR_PASSWORD>` placeholder false
+positives are all handled and locked by unit tests.
+
+**Adversarial corpus** ([`leakbench.jsonl`](provn-cli/tests/corpus/leakbench.jsonl)
+— 229 samples: 125 leaks + 104 clean). This is the same hard set used to train
+the Layer 3 model, so it is deliberately heavy on semantic-IP and obfuscated
+cases the offline layers are *not* expected to catch alone:
+
+| Metric | Value |
+|--------|-------|
+| Precision | 97.9% |
+| False positive rate | 1.0% (1/104) |
+| Secret recall | 65.3% (32/49) — credential leaks |
+| IP / prompt recall | 18.4% (14/76) — needs the optional Layer 3 model |
+
+The regression gate in
+[`provn-cli/tests/leakbench.rs`](provn-cli/tests/leakbench.rs) fails CI if recall
+drops or the false positive rate climbs on either corpus.
+
+End-to-end pre-commit latency (process start + `git diff` + scan) is ~30–50ms on a
+clean commit — run `provn scan` in a repo to measure it for your own tree.
 
 
 ## Development

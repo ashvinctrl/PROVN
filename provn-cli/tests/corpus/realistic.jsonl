@@ -1,0 +1,70 @@
+{"code": "AWS_ACCESS_KEY_ID = \"AKIAIOSFODNN7EXAMPLE\"", "label": "leak", "type": "aws_access_key", "tier": "T0", "category": "secret"}
+{"code": "aws_secret_access_key = \"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\"", "label": "leak", "type": "aws_secret_key", "tier": "T0", "category": "secret"}
+{"code": "GITHUB_TOKEN = \"ghp_FAKE0123456789abcdefABCDEFghijklMN\"", "label": "leak", "type": "github_token", "tier": "T0", "category": "secret"}
+{"code": "gh_pat = \"github_pat_11ABCDE0Q0FAKEexample0_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789aBcDeFgHiJkLmNoPqRs\"", "label": "leak", "type": "github_fine_grained_pat", "tier": "T0", "category": "secret"}
+{"code": "GITLAB_TOKEN = \"glpat-EXAMPLE0123abcXYZ_-\"", "label": "leak", "type": "gitlab_pat", "tier": "T0", "category": "secret"}
+{"code": "npm_token = \"npm_FAKE0123456789abcdefABCDEFghijklMNOP\"", "label": "leak", "type": "npm_token", "tier": "T0", "category": "secret"}
+{"code": "PYPI_TOKEN = \"pypi-AgEIcHlwaS5vcmcCEXAMPLEfakefakefakefakefakefakefakefakefakefakefakefakefa\"", "label": "leak", "type": "pypi_token", "tier": "T0", "category": "secret"}
+{"code": "STRIPE_SECRET_KEY = \"sk_live_EXAMPLE0123456789abcdef\"", "label": "leak", "type": "stripe_live_key", "tier": "T0", "category": "secret"}
+{"code": "GOOGLE_API_KEY = \"AIzaSyEXAMPLE_fake_key_0123456789abcdEFG\"", "label": "leak", "type": "google_api_key", "tier": "T0", "category": "secret"}
+{"code": "SENDGRID_API_KEY = \"SG.EXAMPLEfake0123456789ab.EXAMPLEfake0123456789abcdefABCDEF0123456789xyz\"", "label": "leak", "type": "sendgrid_api_key", "tier": "T0", "category": "secret"}
+{"code": "SLACK_BOT_TOKEN = \"xoxb-FAKEEXAMPLEtokenDoNotUseThisIsNotARealSlackToken00\"", "label": "leak", "type": "slack_bot_token", "tier": "T0", "category": "secret"}
+{"code": "webhook = \"https://hooks.slack.com/services/T00000000/B00000000/EXAMPLEfake0123456789abcd\"", "label": "leak", "type": "slack_webhook", "tier": "T1", "category": "secret"}
+{"code": "TWILIO_API_KEY = \"SKEXAMPLE0123456789abcdef0123456789\"", "label": "leak", "type": "twilio_api_key", "tier": "T0", "category": "secret"}
+{"code": "TELEGRAM_BOT_TOKEN = \"1234567890:AAEXAMPLEfake0123456789abcdefABCDEFghi\"", "label": "leak", "type": "telegram_bot_token", "tier": "T0", "category": "secret"}
+{"code": "DISCORD_WEBHOOK = \"https://discord.com/api/webhooks/123456789012345678/EXAMPLEfake_0123456789abcdefABCDEFghijklmnopqrstuvwxyz0123456789a\"", "label": "leak", "type": "discord_webhook", "tier": "T1", "category": "secret"}
+{"code": "DIGITALOCEAN_TOKEN = \"dop_v1_EXAMPLEfake0123456789abcdef0123456789abcdef0123456789abcdef01\"", "label": "leak", "type": "digitalocean_pat", "tier": "T0", "category": "secret"}
+{"code": "VAULT_TOKEN = \"hvs.EXAMPLEfake0123456789abcdefABCDEFghijklmnop\"", "label": "leak", "type": "vault_token", "tier": "T0", "category": "secret"}
+{"code": "SHOPIFY_TOKEN = \"shpat_EXAMPLEfake0123456789abcdef0123456789\"", "label": "leak", "type": "shopify_access_token", "tier": "T0", "category": "secret"}
+{"code": "-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAEXAMPLEfakekeymaterialdoesnotmatterforthetest0123\n-----END RSA PRIVATE KEY-----", "label": "leak", "type": "private_key_block", "tier": "T0", "category": "secret"}
+{"code": "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEEXAMPLEfakekeymaterial0123456789\n-----END OPENSSH PRIVATE KEY-----", "label": "leak", "type": "private_key_block", "tier": "T0", "category": "secret"}
+{"code": "DATABASE_URL = \"postgresql://app_user:Sup3rS3cret!@db.prod.internal:5432/appdb\"", "label": "leak", "type": "database_url", "tier": "T0", "category": "secret"}
+{"code": "MYSQL_URL = \"mysql://root:r00tpassword@10.0.0.5:3306/main\"", "label": "leak", "type": "database_url", "tier": "T0", "category": "secret"}
+{"code": "MONGO_URI = \"mongodb+srv://admin:M0ngoSecret@cluster0.abcd.mongodb.net/prod\"", "label": "leak", "type": "database_url", "tier": "T0", "category": "secret"}
+{"code": "REDIS_URL = \"redis://:Red1sP4ss@cache.prod.internal:6379/0\"", "label": "leak", "type": "database_url", "tier": "T0", "category": "secret"}
+{"code": "AUTH_JWT = \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.EXAMPLEfakesignature0123456789abcdef\"", "label": "leak", "type": "jwt", "tier": "T1", "category": "secret"}
+{"code": "client_secret = \"EXAMPLEfake_oauth_client_secret_0123456789abcdef\"", "label": "leak", "type": "oauth_client_secret", "tier": "T1", "category": "secret"}
+{"code": "db_password = \"Pr0dDbP@ssw0rd2025\"", "label": "leak", "type": "password", "tier": "T1", "category": "secret"}
+{"code": "private_key = \"EXAMPLEfake_signing_key_0123456789abcdefABCDEF\"", "label": "leak", "type": "private_key", "tier": "T1", "category": "secret"}
+{"code": "encryption_key = \"EXAMPLEfake_aes_key_0123456789abcdef0123456789ab\"", "label": "leak", "type": "encryption_key", "tier": "T1", "category": "secret"}
+{"code": "api_secret = \"EXAMPLEfake_api_secret_0123456789abcdefABCDEFghij\"", "label": "leak", "type": "secret", "tier": "T1", "category": "secret"}
+{"code": "user_id = \"550e8400-e29b-41d4-a716-446655440000\"  # UUID v4", "label": "clean", "type": "uuid", "category": "clean"}
+{"code": "digest = \"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\"  # sha256", "label": "clean", "type": "sha256", "category": "clean"}
+{"code": "COMMIT = \"3a7bd3e2360a3d29eea436fcfb7e44c735d117c9\"  # git sha", "label": "clean", "type": "git_sha", "category": "clean"}
+{"code": "version = \"2.14.3\"", "label": "clean", "type": "semver", "category": "clean"}
+{"code": "PWHASH = \"$2b$12$EXAMPLEbcrypthashvaluethatisnotasecretjustahash00\"", "label": "clean", "type": "bcrypt_hash", "category": "clean"}
+{"code": "png = \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk\"", "label": "clean", "type": "base64_png", "category": "clean"}
+{"code": "pubkey = \"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgEXAMPLEpublickeydata user@host\"", "label": "clean", "type": "ssh_public_key", "category": "clean"}
+{"code": "STRIPE_PUBLISHABLE = \"pk_live_EXAMPLE0123456789abcdef\"  # publishable (public)", "label": "clean", "type": "stripe_publishable", "category": "clean"}
+{"code": "api_key = os.environ[\"API_KEY\"]", "label": "clean", "type": "env_var_ref", "category": "clean"}
+{"code": "token = os.getenv(\"GITHUB_TOKEN\")", "label": "clean", "type": "env_var_ref", "category": "clean"}
+{"code": "api_key = \"your-api-key-here\"", "label": "clean", "type": "placeholder", "category": "clean"}
+{"code": "SECRET_KEY = \"${SECRET_KEY}\"", "label": "clean", "type": "template_placeholder", "category": "clean"}
+{"code": "password = \"<YOUR_PASSWORD>\"", "label": "clean", "type": "placeholder", "category": "clean"}
+{"code": "REDIS_URL = \"redis://localhost:6379/0\"", "label": "clean", "type": "localhost_no_cred", "category": "clean"}
+{"code": "DATABASE_URL = \"postgresql://localhost/myapp_dev\"", "label": "clean", "type": "localhost_no_cred", "category": "clean"}
+{"code": "API_BASE = \"https://api.example.com/v1/users\"", "label": "clean", "type": "url_no_cred", "category": "clean"}
+{"code": "TIMEOUT = 30\nMAX_RETRIES = 5\nPORT = 8080", "label": "clean", "type": "config_no_secret", "category": "clean"}
+{"code": "MODEL = \"gpt-4o-mini\"\nTEMPERATURE = 0.2", "label": "clean", "type": "config_no_secret", "category": "clean"}
+{"code": "color = \"#1a2b3c\"\naccent = \"#ffffff\"", "label": "clean", "type": "hex_color", "category": "clean"}
+{"code": "mac = \"00:1A:2B:3C:4D:5E\"", "label": "clean", "type": "mac_address", "category": "clean"}
+{"code": "host = \"192.168.1.100\"\nport = 5432", "label": "clean", "type": "ip_address", "category": "clean"}
+{"code": "content_type = \"application/json; charset=utf-8\"", "label": "clean", "type": "header_string", "category": "clean"}
+{"code": "def hash_password(pw):\n    return hashlib.sha256(pw.encode()).hexdigest()", "label": "clean", "type": "crypto_util", "category": "clean"}
+{"code": "import requests\nresp = requests.get(API_BASE, timeout=10)", "label": "clean", "type": "http_call", "category": "clean"}
+{"code": "# requirements\nrequests==2.31.0\nflask==3.0.0\npydantic==2.6.1", "label": "clean", "type": "requirements", "category": "clean"}
+{"code": "idempotency_key = str(uuid.uuid4())", "label": "clean", "type": "idempotency_key", "category": "clean"}
+{"code": "cache_key = f\"user:{user_id}:profile\"", "label": "clean", "type": "cache_key", "category": "clean"}
+{"code": "partition_key = f\"{tenant}#{date}\"", "label": "clean", "type": "partition_key", "category": "clean"}
+{"code": "public_key = \"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEXAMPLEpubkey deploy@ci\"", "label": "clean", "type": "ssh_public_key", "category": "clean"}
+{"code": "primary_key = \"id\"\nforeign_key = \"user_id\"", "label": "clean", "type": "db_schema", "category": "clean"}
+{"code": "LOG_LEVEL = \"INFO\"\nDEBUG = False", "label": "clean", "type": "config_no_secret", "category": "clean"}
+{"code": "greeting = \"Hello, welcome to the API documentation.\"", "label": "clean", "type": "plain_string", "category": "clean"}
+{"code": "pattern = r\"^[a-z0-9]+(?:-[a-z0-9]+)*$\"", "label": "clean", "type": "regex_literal", "category": "clean"}
+{"code": "data = base64.b64encode(payload.encode()).decode()", "label": "clean", "type": "encode_util", "category": "clean"}
+{"code": "checksum = zlib.crc32(content)", "label": "clean", "type": "checksum", "category": "clean"}
+{"code": "SAMPLE_RATE = 44100\nBIT_DEPTH = 16", "label": "clean", "type": "config_no_secret", "category": "clean"}
+{"code": "endpoint = \"https://github.com/ashvinctrl/Provn\"", "label": "clean", "type": "url_no_cred", "category": "clean"}
+{"code": "email = \"support@example.com\"", "label": "clean", "type": "email", "category": "clean"}
+{"code": "phone = \"+1-202-555-0142\"", "label": "clean", "type": "phone", "category": "clean"}
+{"code": "iso = \"2026-06-27T12:00:00Z\"", "label": "clean", "type": "timestamp", "category": "clean"}

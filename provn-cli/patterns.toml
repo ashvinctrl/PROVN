@@ -155,7 +155,7 @@ id = "database_url"
 description = "Database connection string with embedded credentials"
 tier = "T0"
 confidence = 0.92
-regex = '(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?)://[^:@\s/]+:([^@\s]+)@[^\s]+'
+regex = '(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|rediss?|amqps?)://[^:@\s/]*:([^@\s]+)@[^\s]+'
 redact = "PROVN_REDACTED_DB_PASSWORD"
 secret_group = 1
 

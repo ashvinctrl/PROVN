@@ -251,6 +251,14 @@ fn default_sensitive_vars() -> Vec<String> {
         "token".into(),
         "private_key".into(),
         "credentials".into(),
+        // High-signal credential `*_key` names not already covered by the
+        // substrings above. Kept explicit rather than a generic `_key` suffix
+        // rule, which would flag benign names (translation_key, lookup_key…).
+        "encryption_key".into(),
+        "access_key".into(),
+        "signing_key".into(),
+        "session_key".into(),
+        "master_key".into(),
     ]
 }
 fn default_audit_path() -> String {

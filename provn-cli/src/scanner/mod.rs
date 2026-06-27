@@ -33,6 +33,42 @@ pub struct ScanResult {
 /// multi-secret diffs that the old single-candidate approach would miss.
 const MAX_AMBIGUOUS: usize = 3;
 
+/// True when an assigned/captured string is an obvious placeholder rather than a
+/// real secret. Shared by the regex and AST layers so documentation and template
+/// forms — `api_key = "your-api-key-here"`, `password = "<YOUR_PASSWORD>"`,
+/// `token = "${GITHUB_TOKEN}"` — don't get reported as leaks.
+pub(crate) fn is_placeholder_value(value: &str) -> bool {
+    let lower = value.to_ascii_lowercase();
+    value.starts_with("test_")
+        || value.starts_with("fake_")
+        || lower.starts_with("placeholder")
+        || value.starts_with("${") // ${VAR} shell/template interpolation
+        || value.starts_with("{{") // {{ jinja/handlebars }}
+        || (value.starts_with('<') && value.ends_with('>')) // <YOUR_PASSWORD>
+        || (lower.starts_with("your") && lower.ends_with("here")) // your-api-key-here / your_api_key_here
+        || lower == "changeme"
+        || lower == "xxx"
+}
+
+/// Scan a single in-memory code snippet as if it were an added file of the
+/// given extension. Lets callers that hold raw source (the benchmark, tests)
+/// reuse the exact pipeline `scan`/`check` run instead of reimplementing it.
+/// Layer 3 honours `cfg` like any other scan, so pass a config with semantic
+/// disabled for a deterministic, offline run.
+pub fn scan_snippet(code: &str, extension: &str, cfg: &Config) -> Vec<ScanResult> {
+    let added_lines: Vec<(usize, String)> = code
+        .lines()
+        .enumerate()
+        .map(|(i, line)| (i + 1, line.to_string()))
+        .collect();
+    let chunk = DiffChunk {
+        file: std::path::PathBuf::from(format!("snippet.{extension}")),
+        extension: extension.to_string(),
+        added_lines,
+    };
+    scan_chunks(&[chunk], cfg)
+}
+
 /// Scan all chunks and return every finding, sorted by confidence descending.
 pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
     let start = Instant::now();
@@ -252,5 +288,40 @@ fn add_ambiguous(pool: &mut Vec<ScanResult>, new: ScanResult) {
                 .partial_cmp(&a.confidence)
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_placeholder_value;
+
+    #[test]
+    fn flags_placeholders() {
+        for v in [
+            "your-api-key-here",
+            "your_api_key_here",
+            "<YOUR_PASSWORD>",
+            "${GITHUB_TOKEN}",
+            "{{ secret }}",
+            "test_key_placeholder",
+            "fake_secret_value",
+            "placeholder_value",
+            "changeme",
+            "xxx",
+        ] {
+            assert!(is_placeholder_value(v), "should be a placeholder: {v}");
+        }
+    }
+
+    #[test]
+    fn keeps_real_secrets() {
+        for v in [
+            "AKIAIOSFODNN7EXAMPLE",
+            "sk_live_EXAMPLE0123456789abcdef",
+            "Pr0dDbP@ssw0rd2025",
+            "ghp_FAKE0123456789abcdefABCDEFghijklMN",
+        ] {
+            assert!(!is_placeholder_value(v), "should not be a placeholder: {v}");
+        }
     }
 }

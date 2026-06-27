@@ -4,6 +4,47 @@ All notable changes to Provn are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project uses
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- **`provn bench [corpus.jsonl]`** — reproducible detection benchmark. Runs the
+  deterministic layers (Layer 1+2, semantic off) over a labelled JSONL corpus
+  and reports precision, false positive rate, secret recall, IP/prompt recall,
+  and per-snippet latency. `--json` for machine output; lists missed leaks and
+  false alarms so gaps are visible.
+- **Two committed corpora**: `provn-cli/tests/corpus/leakbench.jsonl` (229
+  adversarial samples, every leak tagged `secret` vs `ip`) and
+  `provn-cli/tests/corpus/realistic.jsonl` (70 samples: 30 real-format secrets
+  + 40 secret-adjacent clean snippets — the representative real-world signal).
+- **Regression gate** (`provn-cli/tests/leakbench.rs`) — fails CI if recall
+  drops or the false positive rate climbs on either corpus.
+- `provn.yml` excludes the `corpus` test-fixture directory so Provn's own
+  enforcement does not block on its intentionally-fake benchmark secrets.
+
+### Fixed
+- **Placeholder false positives**: documentation/template stand-ins like
+  `api_key = "your-api-key-here"` and `password = "<YOUR_PASSWORD>"` are no
+  longer flagged. A shared placeholder filter now covers `<...>`,
+  `your-…-here`, `${…}`, `{{…}}`, `test_`/`fake_` prefixes, and `changeme`, and
+  is applied in both the regex and AST layers.
+- **Password-only connection strings**: `redis://:password@host` (and other
+  schemes with an empty username) are now detected — the `database_url` rule
+  previously required a `user:pass@` pair.
+- **Credential `*_key` variable names**: `encryption_key`, `access_key`,
+  `signing_key`, `session_key`, and `master_key` are now tracked by the AST
+  layer (benign names such as `primary_key`/`cache_key` stay clean).
+- Combined effect on the realistic corpus: secret recall 93.5% → 100%,
+  precision 93.5% → 100%, FPR 5.0% → 0%.
+
+### Changed
+- README performance numbers are now the values `provn bench` actually produces
+  — realistic corpus 100% secret recall / 100% precision / 0% FPR; adversarial
+  corpus 97.9% precision / 1.0% FPR / 65.3% secret recall — replacing the
+  previous unsubstantiated "97% recall / 1.2% FPR" claim. Reproducible from a
+  single command.
+- `scripts/run-leakbench.sh` now builds the CLI and runs `provn bench` plus the
+  regression gate, instead of referencing scripts that did not exist.
+
 ## [0.2.0] — 2026-06-11
 
 Deployment release: makes Provn adoptable on existing repos and a first-class
