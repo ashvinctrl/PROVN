@@ -419,6 +419,78 @@ mod tests {
              vec!["https://deploy:t0ps3cret@git.internal.example.com/repo.git", // provn:allow
                   "url = \"http://admin:passw0rd123@10.0.0.5:8080/api\""], // provn:allow
              vec!["https://git.internal.example.com/repo.git"]),
+            ("terraform_cloud_token",
+             vec![concat!("01234567890abc.atlasv1.AAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBBCCCCCCCCCCCCCCCCCCCC"), // provn:allow
+                  concat!("TF_TOKEN=ABCDEFGHIJKLMN.atlasv1.0123456789abcdefghij", "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN")], // provn:allow
+             vec!["see atlasv1 docs for details"]),
+            ("databricks_pat",
+             vec![concat!("dapi0123456789abcdef", "0123456789abcdef"), // provn:allow
+                  concat!("token = \"dapiabcdef0123456789", "abcdef0123456789ab\"")], // provn:allow
+             vec!["dapi_short"]),
+            ("doppler_token",
+             vec![concat!("dp.pt.abcdefghijklmnopqrst", "uvwxyz0123456789ABCDEFGHIJ"), // provn:allow
+                  concat!("DOPPLER_TOKEN=dp.st.0123456789abcdefghij", "klmnopqrstuvwxyz0123456789ABCDE")], // provn:allow
+             vec!["dp.pt.short"]),
+            ("grafana_service_account",
+             vec![concat!("glsa_ABCDEFGHIJKLMNOPQRSTUVWXYZ012345", "_a1b2c3d4"), // provn:allow
+                  concat!("key = \"glsa_0123456789abcdefghijklmnopqrstuv", "_deadbeef\"")], // provn:allow
+             vec!["glsa_short_key"]),
+            ("dockerhub_pat",
+             vec![concat!("dckr_pat_abcdefghijklmnopqr", "stuvwxyz01234"), // provn:allow
+                  concat!("DOCKER_TOKEN=dckr_pat_0123456789", "ABCDEFGHIJ_klmno")], // provn:allow
+             vec!["dckr_pat_short"]),
+            ("rubygems_api_key",
+             vec![concat!("rubygems_0123456789abcdef0123456789abcdef", "0123456789abcdef"), // provn:allow
+                  concat!("RUBYGEMS_API_KEY=rubygems_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb")], // provn:allow
+             vec!["rubygems_short"]),
+            ("stripe_webhook_secret",
+             vec![concat!("whsec_0123456789abcdefABCDEFghij", "klmnopqrstuv"), // provn:allow
+                  concat!("STRIPE_WEBHOOK_SECRET=whsec_AAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBB")], // provn:allow
+             vec!["whsec_short"]),
+            ("slack_app_token",
+             vec![concat!("xapp-FAKEEXAMPLEtokenDoNotUse", "0123456789abcd"), // provn:allow
+                  concat!("SLACK_APP_TOKEN=xapp-AAAAAAAAAAAA", "BBBBBBBBBBBB")], // provn:allow
+             vec!["xapp-short"]),
+            ("postman_api_key",
+             vec![concat!("PMAK-0123456789abcdef01234567", "-0123456789abcdef0123456789abcdef01"), // provn:allow
+                  concat!("X-Api-Key: PMAK-abcdef0123456789abcdef01", "-abcdef0123456789abcdef0123456789ab")], // provn:allow
+             vec!["PMAK-tooshort"]),
+            ("linear_api_key",
+             vec![concat!("lin_api_0123456789abcdefghij", "klmnopqrstuvwxyzABCD"), // provn:allow
+                  concat!("LINEAR_API_KEY=lin_api_AAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBB")], // provn:allow
+             vec!["lin_api_short"]),
+            ("notion_token",
+             vec![concat!("ntn_0123456789abcdefghij", "klmnopqrstuvwxyzABCDEFGH"), // provn:allow
+                  concat!("NOTION_TOKEN=ntn_AAAAAAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBBBBBB12")], // provn:allow
+             vec!["ntn_short"]),
+            ("atlassian_api_token",
+             vec![concat!("ATATT3xFfGF0aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccc="), // provn:allow
+                  concat!("ATLASSIAN_TOKEN=ATATT3xFfGF0", "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=")], // provn:allow
+             vec!["ATATT3xFfGF0short"]),
+            ("new_relic_user_key",
+             vec![concat!("NRAK-ABCDEFGHIJKLM", "NOPQRSTUVWXYZ1"), // provn:allow
+                  concat!("NEW_RELIC_KEY=NRAK-0123456789", "ABCDEFGHIJKLMNOPQ")], // provn:allow
+             vec!["NRAK-short"]),
+            ("datadog_api_key",
+             vec![concat!("datadog_api_key = \"0123456789abcdef", "0123456789abcdef\""), // provn:allow
+                  concat!("DD config: datadog 0123456789abcdef", "0123456789abcdef")], // provn:allow
+             vec![concat!("checksum = \"0123456789abcdef", "0123456789abcdef\"")]),
+            ("planetscale_token",
+             vec![concat!("pscale_pw_0123456789abcdefghij", "klmnopqrstuvwxyz0123456789ABCDE"), // provn:allow
+                  concat!("DATABASE_PASSWORD=pscale_tkn_AAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBB.CC")], // provn:allow
+             vec!["pscale_pw_short"]),
+            ("supabase_token",
+             vec![concat!("sbp_0123456789abcdef0123", "456789abcdef01234567"), // provn:allow
+                  concat!("SUPABASE_ACCESS_TOKEN=sbp_deadbeefdeadbeefdead", "beefdeadbeefdeadbeef")], // provn:allow
+             vec!["sbp_short"]),
+            ("google_oauth_client_secret",
+             vec![concat!("GOCSPX-abcdefghijklmnopqrst", "uvwx0123"), // provn:allow
+                  concat!("client_secret = \"GOCSPX-AAAAAAAAAAAAAAAA", "BBBBBBBBBBBB\"")], // provn:allow
+             vec!["GOCSPX-short"]),
+            ("age_secret_key",
+             vec![concat!("AGE-SECRET-KEY-1", "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"), // provn:allow
+                  concat!("export AGE_KEY=AGE-SECRET-KEY-1", "0123456789ABCDEFGHJKMNPQRSTUVWXYZ0123456789ABCDEFGHJKMNPQR")], // provn:allow
+             vec!["AGE-SECRET-KEY-1short"]),
         ]
     }
 

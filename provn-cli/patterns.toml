@@ -335,6 +335,152 @@ confidence = 0.80
 regex = '\b(5[HJK][1-9A-HJ-NP-Za-km-z]{49})\b'
 redact = "PROVN_REDACTED_WIF_KEY"
 
+# ── Platform / SaaS tokens (distinctive prefixes, low FP) ─────────────────────
+
+[[patterns]]
+id = "terraform_cloud_token"
+description = "Terraform Cloud / Enterprise API token"
+tier = "T0"
+confidence = 0.95
+regex = '\b([A-Za-z0-9]{14}\.atlasv1\.[A-Za-z0-9\-_=]{60,})'
+redact = "PROVN_REDACTED_TF_CLOUD_TOKEN"
+
+[[patterns]]
+id = "databricks_pat"
+description = "Databricks personal access token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(dapi[a-f0-9]{32,})\b'
+redact = "PROVN_REDACTED_DATABRICKS_PAT"
+
+[[patterns]]
+id = "doppler_token"
+description = "Doppler service/personal/CLI token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(dp\.(?:pt|st|sa|scim|audit|ct)\.[A-Za-z0-9]{40,})'
+redact = "PROVN_REDACTED_DOPPLER_TOKEN"
+
+[[patterns]]
+id = "grafana_service_account"
+description = "Grafana service account token"
+tier = "T0"
+confidence = 0.97
+regex = '\b(glsa_[A-Za-z0-9]{32}_[A-Fa-f0-9]{8})\b'
+redact = "PROVN_REDACTED_GRAFANA_SA"
+
+[[patterns]]
+id = "dockerhub_pat"
+description = "Docker Hub personal access token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(dckr_pat_[A-Za-z0-9_\-]{20,})'
+redact = "PROVN_REDACTED_DOCKERHUB_PAT"
+
+[[patterns]]
+id = "rubygems_api_key"
+description = "RubyGems API key"
+tier = "T0"
+confidence = 0.95
+regex = '\b(rubygems_[a-f0-9]{48})\b'
+redact = "PROVN_REDACTED_RUBYGEMS_KEY"
+
+[[patterns]]
+id = "stripe_webhook_secret"
+description = "Stripe webhook signing secret"
+tier = "T0"
+confidence = 0.95
+regex = '\b(whsec_[A-Za-z0-9]{32,})'
+redact = "PROVN_REDACTED_STRIPE_WHSEC"
+
+[[patterns]]
+id = "slack_app_token"
+description = "Slack app-level token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(xapp-[0-9A-Za-z\-]{12,})'
+redact = "PROVN_REDACTED_SLACK_APP_TOKEN"
+
+[[patterns]]
+id = "postman_api_key"
+description = "Postman API key"
+tier = "T0"
+confidence = 0.97
+regex = '\b(PMAK-[a-f0-9]{24}-[a-f0-9]{34})\b'
+redact = "PROVN_REDACTED_POSTMAN_KEY"
+
+[[patterns]]
+id = "linear_api_key"
+description = "Linear API key"
+tier = "T0"
+confidence = 0.95
+regex = '\b(lin_api_[A-Za-z0-9]{40,})\b'
+redact = "PROVN_REDACTED_LINEAR_KEY"
+
+[[patterns]]
+id = "notion_token"
+description = "Notion internal integration token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(ntn_[A-Za-z0-9]{40,})\b'
+redact = "PROVN_REDACTED_NOTION_TOKEN"
+
+[[patterns]]
+id = "atlassian_api_token"
+description = "Atlassian API token (Jira/Confluence)"
+tier = "T0"
+confidence = 0.95
+regex = '\b(ATATT3xFfGF0[A-Za-z0-9_\-=]{100,})'
+redact = "PROVN_REDACTED_ATLASSIAN_TOKEN"
+
+[[patterns]]
+id = "new_relic_user_key"
+description = "New Relic user API key"
+tier = "T1"
+confidence = 0.92
+regex = '\b(NRAK-[A-Z0-9]{27})\b'
+redact = "PROVN_REDACTED_NEWRELIC_KEY"
+
+[[patterns]]
+id = "datadog_api_key"
+description = "Datadog API key (32-hex near datadog context)"
+tier = "T1"
+confidence = 0.80
+regex = '(?i)datadog.{0,20}\b([a-f0-9]{32})\b'
+redact = "PROVN_REDACTED_DATADOG_KEY"
+
+[[patterns]]
+id = "planetscale_token"
+description = "PlanetScale database password or token"
+tier = "T0"
+confidence = 0.95
+regex = '\b(pscale_(?:pw|tkn|oauth)_[A-Za-z0-9_\-\.]{32,})'
+redact = "PROVN_REDACTED_PLANETSCALE"
+
+[[patterns]]
+id = "supabase_token"
+description = "Supabase access token"
+tier = "T0"
+confidence = 0.92
+regex = '\b(sbp_[a-f0-9]{40})\b'
+redact = "PROVN_REDACTED_SUPABASE_TOKEN"
+
+[[patterns]]
+id = "google_oauth_client_secret"
+description = "Google OAuth 2.0 client secret"
+tier = "T0"
+confidence = 0.95
+regex = '\b(GOCSPX-[A-Za-z0-9_\-]{28})\b'
+redact = "PROVN_REDACTED_GOOGLE_OAUTH"
+
+[[patterns]]
+id = "age_secret_key"
+description = "age encryption secret key"
+tier = "T0"
+confidence = 0.97
+regex = '\b(AGE-SECRET-KEY-1[0-9A-Z]{58})\b'
+redact = "PROVN_REDACTED_AGE_KEY"
+
 # ── Generic / contextual ──────────────────────────────────────────────────────
 
 [[patterns]]
