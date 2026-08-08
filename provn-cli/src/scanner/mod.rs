@@ -29,8 +29,10 @@ pub struct ScanResult {
 }
 
 /// Maximum number of ambiguous candidates forwarded to Layer 3.
-/// Capping at 3 bounds worst-case pre-commit latency while still catching
-/// multi-secret diffs that the old single-candidate approach would miss.
+/// The L3 model round-trip is the expensive step, so at most this many
+/// candidates (highest confidence first) are sent to it, bounding worst-case
+/// pre-commit latency. Candidates beyond the cap are still **reported** — they
+/// simply skip semantic adjudication rather than being dropped.
 const MAX_AMBIGUOUS: usize = 3;
 
 /// True when an assigned/captured string is an obvious placeholder rather than a
@@ -79,7 +81,9 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
     let entropy_allowlist = entropy::compile_allowlist(&cfg.layers.entropy.allowlist);
 
     let mut confirmed: Vec<ScanResult> = Vec::new();
-    let mut ambiguous: Vec<ScanResult> = Vec::new(); // top-N by confidence
+    // Every medium-confidence candidate. The L3 fan-out is capped later, but
+    // each candidate above the reporting floor is still surfaced.
+    let mut ambiguous: Vec<ScanResult> = Vec::new();
 
     for chunk in chunks {
         for (line_num, line_content) in &chunk.added_lines {
@@ -107,7 +111,7 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                     if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
                     } else {
-                        add_ambiguous(&mut ambiguous, r);
+                        ambiguous.push(r);
                     }
                 }
             }
@@ -138,7 +142,7 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                     if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
                     } else {
-                        add_ambiguous(&mut ambiguous, r);
+                        ambiguous.push(r);
                     }
                 }
             }
@@ -158,6 +162,8 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                 "js" | "jsx" | "mjs" | "cjs" => Some("javascript"),
                 "ts" | "mts" | "cts" => Some("typescript"),
                 "tsx" => Some("tsx"),
+                "go" => Some("go"),
+                "java" => Some("java"),
                 _ => None,
             };
 
@@ -191,69 +197,83 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                     if conf >= cfg.layers.semantic.ambiguous_high {
                         confirmed.push(r);
                     } else {
-                        add_ambiguous(&mut ambiguous, r);
+                        ambiguous.push(r);
                     }
                 }
             }
         }
     }
 
-    // ── Layer 3: semantic — fan out to all ambiguous candidates ──────────────
+    // ── Layer 3: semantic — adjudicate medium-confidence candidates ──────────
+    // The L3 model round-trip is the expensive step, so only the top
+    // MAX_AMBIGUOUS candidates (highest confidence first) are sent to it. Every
+    // other candidate above the reporting floor is still surfaced — it just
+    // skips adjudication instead of being dropped.
     if !ambiguous.is_empty() {
         let sem_cfg = &cfg.layers.semantic;
-        let ready = sem_cfg.enabled && !sem_cfg.model.trim().is_empty();
+        let lo = sem_cfg.ambiguous_low;
 
+        // Highest confidence first: those are the ones worth an L3 call, and
+        // the ones to keep if we ever need to prioritise.
+        ambiguous.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        let ready = sem_cfg.enabled && !sem_cfg.model.trim().is_empty();
         if ready {
             let endpoint = sem_cfg.endpoint.clone();
             let timeout_ms = sem_cfg.timeout_ms;
-            let lo = sem_cfg.ambiguous_low;
             let hi = sem_cfg.ambiguous_high;
             let fallback = sem_cfg.fallback.clone();
 
-            let handles: Vec<_> = ambiguous
-                .into_iter()
-                .map(|cand| {
+            let mut handles = Vec::new();
+            let mut sent = 0usize;
+            for cand in ambiguous {
+                if cand.confidence < lo {
+                    continue; // below the reporting floor
+                }
+                if sent < MAX_AMBIGUOUS && cand.confidence < hi {
+                    // Worth the L3 round-trip.
+                    sent += 1;
                     let ep = endpoint.clone();
                     let fb = fallback.clone();
-                    std::thread::spawn(move || -> Option<ScanResult> {
-                        let conf = cand.confidence;
-                        if conf >= lo && conf < hi {
-                            let code = cand.snippet.as_deref().unwrap_or("").to_string();
-                            let sem = semantic::classify(&code, &ep, timeout_ms);
-                            if sem.skipped {
-                                if fb != "clean" {
-                                    let mut c = cand;
-                                    c.ai_skipped = true;
-                                    Some(c)
-                                } else {
-                                    None
-                                }
-                            } else if sem.label == "leak" {
+                    handles.push(std::thread::spawn(move || -> Option<ScanResult> {
+                        let code = cand.snippet.as_deref().unwrap_or("").to_string();
+                        let sem = semantic::classify(&code, &ep, timeout_ms);
+                        if sem.skipped {
+                            if fb != "clean" {
                                 let mut c = cand;
-                                c.confidence = 0.85;
-                                c.layer = Some("semantic".to_string());
+                                c.ai_skipped = true;
                                 Some(c)
                             } else {
-                                None // L3 cleared it
+                                None
                             }
-                        } else if conf >= lo {
-                            Some(cand) // above band — include as-is
+                        } else if sem.label == "leak" {
+                            let mut c = cand;
+                            c.confidence = 0.85;
+                            c.layer = Some("semantic".to_string());
+                            Some(c)
                         } else {
-                            None
+                            None // L3 cleared it
                         }
-                    })
-                })
-                .collect();
-
+                    }));
+                } else {
+                    // Over the L3 cap (or already at/above the high band):
+                    // report as-is rather than dropping.
+                    confirmed.push(cand);
+                }
+            }
             for handle in handles {
                 if let Ok(Some(r)) = handle.join() {
                     confirmed.push(r);
                 }
             }
         } else {
-            // L3 not configured — include any candidate above the low threshold
+            // L3 not configured — report every candidate above the floor.
             for cand in ambiguous {
-                if cand.confidence >= sem_cfg.ambiguous_low {
+                if cand.confidence >= lo {
                     confirmed.push(cand);
                 }
             }
@@ -272,28 +292,55 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
     confirmed
 }
 
-/// Keep the top [`MAX_AMBIGUOUS`] candidates by confidence.
-fn add_ambiguous(pool: &mut Vec<ScanResult>, new: ScanResult) {
-    if pool.len() < MAX_AMBIGUOUS {
-        pool.push(new);
-        pool.sort_by(|a, b| {
-            b.confidence
-                .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-    } else if pool.last().is_some_and(|w| new.confidence > w.confidence) {
-        *pool.last_mut().unwrap() = new;
-        pool.sort_by(|a, b| {
-            b.confidence
-                .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::is_placeholder_value;
+    use super::{is_placeholder_value, scan_chunks};
+    use crate::diff::DiffChunk;
+
+    /// With Layer 3 off, more than `MAX_AMBIGUOUS` medium-confidence findings on
+    /// one file must all be reported — the L3 fan-out cap must not silently drop
+    /// reportable findings (regression: cloud-URI hits lost behind hostname hits).
+    #[test]
+    fn ambiguous_findings_are_not_capped_when_reported() {
+        let mut cfg = crate::config::Config::default();
+        cfg.layers.semantic.enabled = false; // deterministic offline path
+
+        let lines = [
+            "a = \"s3://private-ml/one.jsonl\"",
+            "h1 = \"one.prod.internal\"",
+            "h2 = \"two.prod.internal\"",
+            "h3 = \"three.prod.internal\"",
+            "h4 = \"four.prod.internal\"",
+        ];
+        let chunk = DiffChunk {
+            file: std::path::PathBuf::from("many.py"),
+            extension: "py".to_string(),
+            added_lines: lines
+                .iter()
+                .enumerate()
+                .map(|(i, l)| (i + 1, l.to_string()))
+                .collect(),
+        };
+
+        let findings = scan_chunks(&[chunk], &cfg);
+        // One cloud-storage URI + four internal hostnames = five medium findings,
+        // all above the reporting floor, none dropped by the cap of 3.
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.match_type.as_deref() == Some("cloud_storage_uri")),
+            "cloud-storage URI must survive the ambiguous cap: {:?}",
+            findings
+                .iter()
+                .map(|f| f.match_type.clone())
+                .collect::<Vec<_>>()
+        );
+        let hosts = findings
+            .iter()
+            .filter(|f| f.match_type.as_deref() == Some("internal_hostname"))
+            .count();
+        assert_eq!(hosts, 4, "all four internal hostnames must be reported");
+    }
 
     #[test]
     fn flags_placeholders() {
@@ -316,7 +363,7 @@ mod tests {
     #[test]
     fn keeps_real_secrets() {
         for v in [
-            "AKIAIOSFODNN7EXAMPLE",
+            "AKIAIOSFODNN7EXAMPLE", // provn:allow — AWS's published example key
             "sk_live_EXAMPLE0123456789abcdef",
             "Pr0dDbP@ssw0rd2025",
             "ghp_FAKE0123456789abcdefABCDEFghijklMN",

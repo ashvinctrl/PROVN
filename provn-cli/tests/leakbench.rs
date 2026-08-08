@@ -51,7 +51,7 @@ fn u(v: &serde_json::Value, key: &str) -> u64 {
 fn corpora_load_cleanly() {
     // Every line must parse and carry a valid label — a malformed corpus would
     // silently shrink the denominator and inflate the rates.
-    for (corpus, min_samples) in [(ADVERSARIAL, 220), (REALISTIC, 65)] {
+    for (corpus, min_samples) in [(ADVERSARIAL, 220), (REALISTIC, 90)] {
         let r = run_bench(corpus);
         assert_eq!(u(&r, "skipped"), 0, "{corpus}: unparseable/unlabeled lines");
         assert!(
@@ -70,9 +70,14 @@ fn corpora_load_cleanly() {
 #[test]
 fn adversarial_corpus_metrics_hold() {
     // The adversarial LeakBench (also the Layer 3 training set). Measured
-    // 2026-06-27: precision 97.9%, FPR 0.96% (1/104), secret recall 65.3%
-    // (32/49). Low overall recall is expected — most leaks are semantic IP that
-    // needs Layer 3. FPR and precision are the load-bearing gates here.
+    // 2026-07-15 after adding the structured infrastructure/IP detectors
+    // (cloud_storage_uri, internal_hostname): precision 98.2%, FPR 0.96%
+    // (1/104), secret recall 65.3% (32/49), IP recall 30.3% (23/76, up from
+    // 18.4% — the object-storage-URI and internal-hostname detectors convert
+    // proprietary data-location leaks that previously needed Layer 3). Overall
+    // recall stays modest because most remaining IP leaks (proprietary
+    // algorithms, system prompts) are semantic and still need Layer 3. FPR and
+    // precision are the load-bearing gates.
     let r = run_bench(ADVERSARIAL);
     assert!(
         f(&r, "fpr") <= 0.02,
@@ -89,17 +94,26 @@ fn adversarial_corpus_metrics_hold() {
         "adversarial secret recall regressed to {:.1}% (gate: >=60%)",
         f(&r, "secret_recall") * 100.0
     );
+    // Lock in the structured IP-detector gain (measured 30.3%) with margin so a
+    // regression that drops the cloud-URI/internal-host detectors is caught.
+    assert!(
+        f(&r, "ip_recall") >= 0.25,
+        "adversarial IP recall regressed to {:.1}% (gate: >=25%)",
+        f(&r, "ip_recall") * 100.0
+    );
 }
 
 #[test]
 fn realistic_corpus_metrics_hold() {
     // Real-format secrets + secret-adjacent clean code — the representative
-    // real-world signal. Measured 2026-06-27 after the placeholder, connection
-    // string, and credential-key-name fixes: secret recall 100% (30/30),
-    // precision 100%, FPR 0% (0/40).
+    // real-world signal. Measured 2026-06-28 after adding the 18 new-provider
+    // fixtures (Terraform/Databricks/Doppler/Grafana/DockerHub/RubyGems/Stripe
+    // webhook/Slack app/Postman/Linear/Notion/Atlassian/New Relic/Datadog/
+    // PlanetScale/Supabase/Google OAuth/age): secret recall 100% (48/48),
+    // precision 100%, FPR 0% (0/46).
     let r = run_bench(REALISTIC);
     assert!(
-        u(&r, "secret_total") >= 28,
+        u(&r, "secret_total") >= 46,
         "realistic secret subset shrank to {}",
         u(&r, "secret_total")
     );

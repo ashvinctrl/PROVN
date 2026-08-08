@@ -491,6 +491,24 @@ mod tests {
              vec![concat!("AGE-SECRET-KEY-1", "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"), // provn:allow
                   concat!("export AGE_KEY=AGE-SECRET-KEY-1", "0123456789ABCDEFGHJKMNPQRSTUVWXYZ0123456789ABCDEFGHJKMNPQR")], // provn:allow
              vec!["AGE-SECRET-KEY-1short"]),
+            ("cloud_storage_uri",
+             vec!["DATASETS = ['s3://private-ml/labeled-conversations-v3.jsonl']",
+                  "path = \"gs://acme-internal/annotated-customer-reviews-2025\"",
+                  "weights: az://companyblobstorage/datasets/customer-support-pii.parquet"],
+             // Bare scheme (no bucket/path) and a public https URL that merely
+             // mentions s3 must not trip the object-storage scheme detector.
+             vec!["s3://", "https://s3.amazonaws.com/docs/index.html"]),
+            ("internal_hostname",
+             vec!["DATABASE_HOST = \"prod-db.internal\"",
+                  "redis_url = \"redis.prod.internal:6379\"",
+                  "conn = \"postgresql://u:p@prod.db.internal:5432/x\"", // provn:allow
+                  "endpoint = \"payments.svc.cluster.local\""],
+             // Public domains, the mDNS-style .local suffix, and dotted package
+             // namespaces (preceded by whitespace, not network authority) must
+             // not match.
+             vec!["api.github.com", "myapp.local", "example.com",
+                  "package com.corp.internal;",
+                  "import com.example.internal.Service;"]),
         ]
     }
 

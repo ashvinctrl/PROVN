@@ -68,3 +68,27 @@
 {"code": "email = \"support@example.com\"", "label": "clean", "type": "email", "category": "clean"}
 {"code": "phone = \"+1-202-555-0142\"", "label": "clean", "type": "phone", "category": "clean"}
 {"code": "iso = \"2026-06-27T12:00:00Z\"", "label": "clean", "type": "timestamp", "category": "clean"}
+{"code": "TERRAFORM_TOKEN = \"EXAMPLE0123abc.atlasv1.EXAMPLEfake0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ0123456789extrapad\"", "label": "leak", "type": "terraform_cloud_token", "tier": "T0", "category": "secret"}
+{"code": "DATABRICKS_TOKEN = \"dapiEXAMPLEfake0123456789abcdef0123\"", "label": "leak", "type": "databricks_pat", "tier": "T0", "category": "secret"}
+{"code": "DOPPLER_TOKEN = \"dp.pt.EXAMPLEfakeDoNotUse0123456789abcdefghijklmnopqrs\"", "label": "leak", "type": "doppler_token", "tier": "T0", "category": "secret"}
+{"code": "GRAFANA_TOKEN = \"glsa_EXAMPLEfake0123456789abcdefgh_EXAMPLE1\"", "label": "leak", "type": "grafana_service_account", "tier": "T0", "category": "secret"}
+{"code": "DOCKERHUB_TOKEN = \"dckr_pat_EXAMPLEfakeDoNotUse0123456789abcde\"", "label": "leak", "type": "dockerhub_pat", "tier": "T0", "category": "secret"}
+{"code": "RUBYGEMS_API_KEY = \"rubygems_EXAMPLEfake0123456789abcdef0123456789ab\"", "label": "leak", "type": "rubygems_api_key", "tier": "T0", "category": "secret"}
+{"code": "STRIPE_WEBHOOK_SECRET = \"whsec_EXAMPLEfake0123456789abcdefABCDEFghij\"", "label": "leak", "type": "stripe_webhook_secret", "tier": "T0", "category": "secret"}
+{"code": "SLACK_APP_TOKEN = \"xapp-FAKEEXAMPLEappTokenDoNotUse0123456789\"", "label": "leak", "type": "slack_app_token", "tier": "T0", "category": "secret"}
+{"code": "POSTMAN_API_KEY = \"PMAK-EXAMPLEfake0123456789-EXAMPLEfake0123456789abcdef\"", "label": "leak", "type": "postman_api_key", "tier": "T0", "category": "secret"}
+{"code": "LINEAR_API_KEY = \"lin_api_EXAMPLEfake0123456789abcdefABCDEFghijklmnop\"", "label": "leak", "type": "linear_api_key", "tier": "T0", "category": "secret"}
+{"code": "NOTION_TOKEN = \"ntn_EXAMPLEfake0123456789abcdefABCDEFghijklmnopqr\"", "label": "leak", "type": "notion_token", "tier": "T0", "category": "secret"}
+{"code": "ATLASSIAN_API_TOKEN = \"ATATT3xFfGF0EXAMPLEfake0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJ0123456789EXAMPLEfakepaddingvalue123\"", "label": "leak", "type": "atlassian_api_token", "tier": "T0", "category": "secret"}
+{"code": "NEW_RELIC_API_KEY = \"NRAK-EXAMPLEfake0123456789abcdef\"", "label": "leak", "type": "new_relic_user_key", "tier": "T0", "category": "secret"}
+{"code": "DATADOG_API_KEY = \"datadogEXAMPLEfake0123456789abcd\"", "label": "leak", "type": "datadog_api_key", "tier": "T0", "category": "secret"}
+{"code": "PLANETSCALE_PASSWORD = \"pscale_pw_EXAMPLEfakeDoNotUse.0123456789abc\"", "label": "leak", "type": "planetscale_token", "tier": "T0", "category": "secret"}
+{"code": "SUPABASE_TOKEN = \"sbp_EXAMPLEfake0123456789abcdef0123456789\"", "label": "leak", "type": "supabase_token", "tier": "T0", "category": "secret"}
+{"code": "GOOGLE_OAUTH_CLIENT_SECRET = \"GOCSPX-EXAMPLEfake0123456789abcdefg\"", "label": "leak", "type": "google_oauth_client_secret", "tier": "T0", "category": "secret"}
+{"code": "AGE_SECRET_KEY = \"AGE-SECRET-KEY-1EXAMPLEfake0123456789abcdef\"", "label": "leak", "type": "age_secret_key", "tier": "T0", "category": "secret"}
+{"code": "POSTMAN_API_KEY = os.environ[\"POSTMAN_API_KEY\"]", "label": "clean", "type": "env_var_ref", "category": "clean"}
+{"code": "notion_token = \"your-notion-token-here\"", "label": "clean", "type": "placeholder", "category": "clean"}
+{"code": "DATABRICKS_HOST = \"https://dbc-12345678-90ab.cloud.databricks.com\"", "label": "clean", "type": "url_no_cred", "category": "clean"}
+{"code": "supabase_url = \"https://abcdefghijkl.supabase.co\"", "label": "clean", "type": "url_no_cred", "category": "clean"}
+{"code": "linear_api_key = os.getenv(\"LINEAR_API_KEY\")", "label": "clean", "type": "env_var_ref", "category": "clean"}
+{"code": "DOPPLER_PROJECT = \"backend-api\"\nDOPPLER_CONFIG = \"prod\"", "label": "clean", "type": "config_no_secret", "category": "clean"}

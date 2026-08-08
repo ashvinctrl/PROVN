@@ -7,6 +7,32 @@ All notable changes to Provn are documented here. Format follows
 ## [Unreleased]
 
 ### Added
+- **2 structured infrastructure / IP-disclosure detectors** (63 → 65 rules):
+  `cloud_storage_uri` (object-storage URIs — `s3://`, `gs://`, `gcs://`,
+  `az://`, `abfss://`, `wasbs://` — pointing at org-controlled buckets) and
+  `internal_hostname` (`.internal`, `.corp`, `.intranet`, `.lan`, and k8s
+  `.svc.cluster.local`, anchored to a network-authority context so dotted
+  package names like `com.corp.internal` are not mistaken for hosts). These
+  catch proprietary data-location and network-topology leaks that previously
+  only the optional Layer 3 model could, lifting offline IP recall on the
+  adversarial corpus from **18.4% (14/76) to 30.3% (23/76)** with no change to
+  the false positive rate (still 1.0%, 1/104) — measured, not projected. Both
+  ship at medium tier / medium confidence (a review signal, not a hard block)
+  with positive/negative unit cases, and the gain is locked by a new IP-recall
+  regression gate.
+- **18 new built-in secret patterns** (45 → 63 rules): Terraform Cloud,
+  Databricks, Doppler, Grafana service accounts, Docker Hub, RubyGems, Stripe
+  webhook secrets, Slack app tokens, Postman, Linear, Notion, Atlassian, New
+  Relic, Datadog, PlanetScale, Supabase, Google OAuth client secrets, and age
+  keys. All prefix- or context-anchored to keep false positives near zero; each
+  ships with positive/negative unit cases.
+- **AST Layer 2 now covers Go and Java** (`tree-sitter-go`, `tree-sitter-java`)
+  in addition to Python/JS/TS/TSX — Go `apiKey := "..."` / `var`/`const` and
+  Java field/local declarations now reach the taint layer instead of regex+
+  entropy only.
+- **18 new-provider fixtures added to `realistic.jsonl`** (now 94 samples: 48
+  secrets + 46 clean) so the benchmark exercises the broadened detection;
+  measured secret recall 100% (48/48), precision 100%, FPR 0% (0/46).
 - **`provn bench [corpus.jsonl]`** — reproducible detection benchmark. Runs the
   deterministic layers (Layer 1+2, semantic off) over a labelled JSONL corpus
   and reports precision, false positive rate, secret recall, IP/prompt recall,
@@ -14,8 +40,8 @@ All notable changes to Provn are documented here. Format follows
   false alarms so gaps are visible.
 - **Two committed corpora**: `provn-cli/tests/corpus/leakbench.jsonl` (229
   adversarial samples, every leak tagged `secret` vs `ip`) and
-  `provn-cli/tests/corpus/realistic.jsonl` (70 samples: 30 real-format secrets
-  + 40 secret-adjacent clean snippets — the representative real-world signal).
+  `provn-cli/tests/corpus/realistic.jsonl` (94 samples: 48 real-format secrets
+  + 46 secret-adjacent clean snippets — the representative real-world signal).
 - **Regression gate** (`provn-cli/tests/leakbench.rs`) — fails CI if recall
   drops or the false positive rate climbs on either corpus.
 - `provn.yml` excludes the `corpus` test-fixture directory so Provn's own
@@ -27,7 +53,7 @@ All notable changes to Provn are documented here. Format follows
   longer flagged. A shared placeholder filter now covers `<...>`,
   `your-…-here`, `${…}`, `{{…}}`, `test_`/`fake_` prefixes, and `changeme`, and
   is applied in both the regex and AST layers.
-- **Password-only connection strings**: `redis://:password@host` (and other
+- **Password-only connection strings**: `redis://:password@host` (and other <!-- provn:allow -->
   schemes with an empty username) are now detected — the `database_url` rule
   previously required a `user:pass@` pair.
 - **Credential `*_key` variable names**: `encryption_key`, `access_key`,
@@ -35,6 +61,12 @@ All notable changes to Provn are documented here. Format follows
   layer (benign names such as `primary_key`/`cache_key` stay clean).
 - Combined effect on the realistic corpus: secret recall 93.5% → 100%,
   precision 93.5% → 100%, FPR 5.0% → 0%.
+- **Dropped findings on multi-finding files**: the medium-confidence (Layer 3
+  candidate) pool was capped at 3 *before reporting*, so a file with more than
+  three ambiguous findings silently lost the lowest-confidence ones (e.g. an
+  `s3://` data-location leak hidden behind several internal-hostname hits). The
+  cap now bounds only the expensive semantic-model fan-out; every candidate
+  above the reporting floor is surfaced.
 
 ### Changed
 - README performance numbers are now the values `provn bench` actually produces

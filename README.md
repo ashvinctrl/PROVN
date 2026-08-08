@@ -153,9 +153,9 @@ Provn runs three detection layers in sequence:
 
 | Layer | Method | Latency | Catches |
 |-------|--------|---------|---------|
-| 1a | Regex patterns — 45 built-in rules + NFKC normalization + split-string reassembly | <5ms | AWS/Azure/GCP keys, GitHub/GitLab tokens, Stripe/Square, Slack/Twilio/SendGrid, OpenAI/Anthropic/HF, DB URLs, private keys, mnemonics |
+| 1a | Regex patterns — 65 built-in rules + NFKC normalization + split-string reassembly | <5ms | AWS/Azure/GCP keys, GitHub/GitLab tokens, Stripe/Square, Slack/Twilio/SendGrid, OpenAI/Anthropic/HF, Terraform/Databricks/Doppler, Postman/Linear/Notion/Atlassian, PlanetScale/Supabase, DB URLs, private keys, mnemonics, object-storage URIs, internal hostnames |
 | 1b | Shannon entropy analysis with per-extension thresholds + allowlist | <5ms | High-entropy strings in assignments, hex-encoded secrets |
-| 2  | Tree-sitter AST analysis | <50ms | `system_prompt = "..."`, `const apiKey = "..."` in Python / JS / TS / TSX |
+| 2  | Tree-sitter AST analysis | <50ms | `system_prompt = "..."`, `const apiKey = "..."`, `apiKey := "..."` in Python / JS / TS / TSX / Go / Java <!-- provn:allow --> |
 | 3  | Gemma 4 E2B (on-device, optional) | <800ms | Ambiguous IP leaks in the 0.4–0.8 confidence band |
 
 Layer 3 only activates for ambiguous cases. Confident detections from L1 and L2 skip it entirely. The built-in
@@ -281,19 +281,19 @@ All numbers below are the deterministic layers only (Layer 1+2, semantic model
 off), measured 2026-06-27.
 
 **Realistic corpus** ([`realistic.jsonl`](provn-cli/tests/corpus/realistic.jsonl)
-— 70 samples: 30 real-format secrets + 40 secret-adjacent clean snippets). This
+— 94 samples: 48 real-format secrets + 46 secret-adjacent clean snippets). This
 is the representative real-world signal:
 
 | Metric | Value |
 |--------|-------|
-| Secret recall | **100%** (30/30) |
+| Secret recall | **100%** (48/48) |
 | Precision | **100%** |
-| False positive rate | 0% (0/40) |
+| False positive rate | 0% (0/46) |
 | Engine latency | sub-millisecond per snippet |
 
 These numbers are on a small representative corpus, not a guarantee of perfect
 coverage on every real secret — but the gaps an earlier run surfaced are now
-closed: password-only `redis://:pass@…` URLs, `encryption_key`-style variable
+closed: password-only `redis://:pass@…` URLs, `encryption_key`-style variable <!-- provn:allow -->
 names, and the `your-api-key-here` / `<YOUR_PASSWORD>` placeholder false
 positives are all handled and locked by unit tests.
 
@@ -304,10 +304,16 @@ cases the offline layers are *not* expected to catch alone:
 
 | Metric | Value |
 |--------|-------|
-| Precision | 97.9% |
+| Precision | 98.2% |
 | False positive rate | 1.0% (1/104) |
 | Secret recall | 65.3% (32/49) — credential leaks |
-| IP / prompt recall | 18.4% (14/76) — needs the optional Layer 3 model |
+| IP / prompt recall | 30.3% (23/76) — structured IP now offline; the rest needs Layer 3 |
+
+The IP-recall lift (18.4% → 30.3%) comes from two structured detectors —
+object-storage URIs (`s3://`, `gs://`, `az://…`) and internal hostnames
+(`.internal`, `.corp`, `.svc.cluster.local`) — that catch proprietary
+data-location and topology leaks offline. The remaining IP misses are
+proprietary algorithms and system prompts, which stay a Layer 3 (semantic) job.
 
 The regression gate in
 [`provn-cli/tests/leakbench.rs`](provn-cli/tests/leakbench.rs) fails CI if recall

@@ -18,12 +18,17 @@ pub struct AstMatch {
 ///   Python      — `assignment` (left/right fields)
 ///   JS/TS/TSX   — `variable_declarator` (const/let/var), `assignment_expression`,
 ///                 and object literal `pair` entries
+///   Java        — `variable_declarator` (field/local) and `assignment_expression`
+///   Go          — `short_var_declaration` (`:=`), `assignment_statement`,
+///                 and `var_spec`/`const_spec` (LHS/RHS wrapped in expression_list)
 pub fn scan_source(source: &str, lang: &str, cfg: &AstConfig) -> Vec<AstMatch> {
     let language = match lang {
         "python" => tree_sitter_python::LANGUAGE.into(),
         "javascript" => tree_sitter_javascript::LANGUAGE.into(),
         "typescript" => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
         "tsx" => tree_sitter_typescript::LANGUAGE_TSX.into(),
+        "go" => tree_sitter_go::LANGUAGE.into(),
+        "java" => tree_sitter_java::LANGUAGE.into(),
         _ => return vec![],
     };
 
@@ -53,15 +58,28 @@ fn scan_node(node: Node<'_>, src: &[u8], cfg: &AstConfig, out: &mut Vec<AstMatch
     }
 }
 
+/// Go wraps assignment LHS/RHS in an `expression_list`; unwrap to the first
+/// named child so single-value bindings expose their identifier/literal
+/// directly. Multi-assignments (`a, b := x, y`) only surface the first pair,
+/// which covers the overwhelmingly common single-secret case.
+fn unwrap_expr_list(node: Node) -> Node {
+    if node.kind() == "expression_list" {
+        if let Some(first) = node.named_child(0) {
+            return first;
+        }
+    }
+    node
+}
+
 /// Extract (lhs, rhs) for any node kind that binds a name to a value.
 fn binding_parts<'a>(node: Node<'a>) -> Option<(Node<'a>, Node<'a>)> {
     match node.kind() {
-        // Python `x = ...` and JS/TS `x = ...`
+        // Python `x = ...`, JS/TS/Java `x = ...`
         "assignment" | "assignment_expression" => Some((
             node.child_by_field_name("left")?,
             node.child_by_field_name("right")?,
         )),
-        // JS/TS `const x = ...`, `let x = ...`, `var x = ...`
+        // JS/TS `const x = ...` / `let` / `var`, and Java field/local declarators
         "variable_declarator" => Some((
             node.child_by_field_name("name")?,
             node.child_by_field_name("value")?,
@@ -71,6 +89,16 @@ fn binding_parts<'a>(node: Node<'a>) -> Option<(Node<'a>, Node<'a>)> {
             node.child_by_field_name("key")?,
             node.child_by_field_name("value")?,
         )),
+        // Go `x := "..."` and `x = "..."` (LHS/RHS are expression_lists)
+        "short_var_declaration" | "assignment_statement" => Some((
+            unwrap_expr_list(node.child_by_field_name("left")?),
+            unwrap_expr_list(node.child_by_field_name("right")?),
+        )),
+        // Go `var x = "..."` / `const x = "..."` (value is an expression_list)
+        "var_spec" | "const_spec" => Some((
+            node.child_by_field_name("name")?,
+            unwrap_expr_list(node.child_by_field_name("value")?),
+        )),
         _ => None,
     }
 }
@@ -78,7 +106,13 @@ fn binding_parts<'a>(node: Node<'a>) -> Option<(Node<'a>, Node<'a>)> {
 fn is_string_node(kind: &str) -> bool {
     matches!(
         kind,
-        "string" | "string_literal" | "template_string" | "concatenated_string"
+        "string"
+            | "string_literal"
+            | "template_string"
+            | "concatenated_string"
+            // Go string literals
+            | "interpreted_string_literal"
+            | "raw_string_literal"
     )
 }
 
@@ -296,6 +330,80 @@ mod tests {
             results.is_empty(),
             "your-...-here placeholders must be skipped"
         );
+    }
+
+    #[test]
+    fn detects_go_short_var_declaration() {
+        let key = concat!("sk-proj-abcdefghijklm", "nopqrstuvwxyz123456"); // provn:allow
+        let src = format!("package main\nfunc main() {{\n\tapiKey := \"{key}\"\n}}");
+        let results = scan_source(&src, "go", &default_cfg());
+        assert_eq!(results.len(), 1, "Go := short var decl must be detected");
+        assert_eq!(results[0].var_name, "apiKey");
+    }
+
+    #[test]
+    fn detects_go_var_and_const_declaration() {
+        let src = concat!(
+            "package main\n",
+            "var apiKey = \"abcdefghijkl",
+            "mnopqrstuvwx\"\n",
+            "const token = \"hunter22hunter22\"\n"
+        ); // provn:allow
+        let results = scan_source(src, "go", &default_cfg());
+        assert_eq!(
+            results.len(),
+            2,
+            "Go var + const decls must both be detected"
+        );
+    }
+
+    #[test]
+    fn detects_go_assignment_statement() {
+        let src = "package main\nfunc main() {\n\tpassword = \"Pr0dDbP@ssw0rd2025\"\n}"; // provn:allow
+        let results = scan_source(src, "go", &default_cfg());
+        assert!(results.iter().any(|m| m.var_name == "password"));
+    }
+
+    #[test]
+    fn detects_java_field_declaration() {
+        let key = concat!("sk-proj-abcdefghijklm", "nopqrstuvwxyz123456"); // provn:allow
+        let src = format!("class Config {{ String apiKey = \"{key}\"; }}");
+        let results = scan_source(&src, "java", &default_cfg());
+        assert_eq!(results.len(), 1, "Java field declaration must be detected");
+        assert_eq!(results[0].var_name, "apiKey");
+    }
+
+    #[test]
+    fn detects_java_local_and_assignment() {
+        let src = concat!(
+            "class C {\n",
+            "  void run() {\n",
+            "    String secret = \"abcdefghijklmnop\";\n", // provn:allow
+            "    this.password = \"hunter22hunter22\";\n", // provn:allow
+            "  }\n",
+            "}\n"
+        );
+        let results = scan_source(src, "java", &default_cfg());
+        assert_eq!(
+            results.len(),
+            2,
+            "Java local var + field assignment must both be detected"
+        );
+    }
+
+    #[test]
+    fn go_raw_string_literal_is_detected() {
+        // Go backtick raw strings must be unquoted and scanned like normal strings.
+        let src = "package main\nfunc main() {\n\tapiKey := `abcdefghijklmnopqrst`\n}"; // provn:allow
+        let results = scan_source(src, "go", &default_cfg());
+        assert_eq!(results.len(), 1, "Go raw string literal must be detected");
+    }
+
+    #[test]
+    fn go_non_sensitive_var_not_flagged() {
+        let src = "package main\nfunc main() {\n\ttimeout := \"thirty seconds total\"\n}";
+        let results = scan_source(src, "go", &default_cfg());
+        assert!(results.is_empty(), "non-sensitive Go var must not flag");
     }
 
     #[test]

@@ -539,3 +539,34 @@ confidence = 0.85
 regex = 'https?://[^:@\s/]+:([^@\s/]{6,})@[^\s]+'
 redact = "PROVN_REDACTED_URL_CREDS"
 secret_group = 1
+
+# ── Infrastructure / IP disclosure ────────────────────────────────────────────
+#
+# These surface intellectual-property and internal-topology leaks rather than
+# credentials: hard-coded references to org-controlled data stores and internal
+# hostnames. They sit at medium tier / medium confidence (the ambiguous band) —
+# reported and, when the semantic layer is enabled, confirmed by it — because a
+# data-location or hostname is a review signal, not a hard secret, and should
+# not block a commit on its own the way a T0/T1 credential does.
+
+[[patterns]]
+id = "cloud_storage_uri"
+description = "Object-storage URI referencing an org-controlled bucket (possible proprietary data/model location leak)"
+tier = "T2"
+confidence = 0.55
+regex = '''(?i)\b((?:s3a?n?|gs|gcs|az|abfss?|wasbs?)://[a-z0-9][a-z0-9._-]{1,62}/[^\s"'`]+)'''
+redact = "PROVN_REDACTED_STORAGE_URI"
+secret_group = 1
+
+[[patterns]]
+id = "internal_hostname"
+description = "Internal/private hostname disclosing network topology (.internal/.corp/.intranet/.lan or k8s .svc.cluster.local)"
+tier = "T2"
+confidence = 0.60
+# Require a network-authority prefix (scheme `://`, userinfo `@`, a quote, or an
+# assignment) before the host. Rust regex has no lookahead, so this anchoring is
+# what keeps dotted namespaces like Java `package com.corp.internal;` from being
+# mistaken for a hostname — those are preceded by whitespace, not authority.
+regex = '''(?i)(?:://|@|=\s*["'`]?|["'`])([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:internal|intranet|corp|lan)|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.svc\.cluster\.local)\b'''
+redact = "PROVN_REDACTED_INTERNAL_HOST"
+secret_group = 1
