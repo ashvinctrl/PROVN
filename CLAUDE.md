@@ -86,6 +86,8 @@ cd aegis-model && modal run modal_finetune.py
 - tree-sitter-python = "0.23"
 - tree-sitter-javascript = "0.23"
 - tree-sitter-typescript = "0.23"   # TS + TSX grammars
+- tree-sitter-go = "0.23"
+- tree-sitter-java = "0.23"
 - chrono = "0.4"
 - once_cell = "1", unicode-normalization = "0.1", thiserror = "1"
 - reqwest = "0.12" (blocking) — Layer 3 HTTP client

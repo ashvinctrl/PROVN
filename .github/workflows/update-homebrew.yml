@@ -46,6 +46,15 @@ jobs:
           echo "sha_aarch64_linux=$(download_sha provn-aarch64-linux.tar.gz)" >> $GITHUB_OUTPUT
           echo "sha_x86_64_linux=$(download_sha provn-x86_64-linux.tar.gz)" >> $GITHUB_OUTPUT
 
+      # The formula updater lives in this repo, so it has to be on disk before
+      # the update step can call it. Checked out to its own path so it does not
+      # collide with the tap checkout below.
+      - name: Checkout Provn (for the formula updater script)
+        if: steps.tap_auth.outputs.enabled == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: provn-src
+
       - name: Checkout homebrew-tap
         if: steps.tap_auth.outputs.enabled == 'true'
         uses: actions/checkout@v4
@@ -64,7 +73,7 @@ jobs:
           SHA_X86_64_LINUX: ${{ steps.sha.outputs.sha_x86_64_linux }}
         run: |
           cd homebrew-tap
-          python3 ../scripts/update-homebrew-formula.py Formula/provn.rb
+          python3 ../provn-src/scripts/update-homebrew-formula.py Formula/provn.rb
 
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
