@@ -30,6 +30,13 @@ exclude_files:
   - "*.lock"
   - "*.min.js"
   - "*.map"
+  # Provn scanning Provn: these two files ARE the detection rules and the
+  # positive/negative fixtures that exercise them, so by construction every
+  # pattern matches its own definition. Same reasoning as excluding the
+  # benchmark corpora — without this, the repo's own CI emits ~60 warnings a
+  # run about its rule table, which is how people learn to ignore warnings.
+  - "patterns.toml"
+  - "regex_scan.rs"
 
 # Risk tier configuration
 # T0: Critical — hard block, no bypass allowed
