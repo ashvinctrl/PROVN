@@ -221,10 +221,12 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        let ready = sem_cfg.enabled && !sem_cfg.model.trim().is_empty();
+        let backend = semantic::Backend::from_config(sem_cfg);
+        // A hosted backend needs a key; a local one needs a model file. Either
+        // way, `enabled: false` keeps Layer 3 out of the picture entirely.
+        let ready =
+            sem_cfg.enabled && (!sem_cfg.model.trim().is_empty() || backend.api_key.is_some());
         if ready {
-            let endpoint = sem_cfg.endpoint.clone();
-            let timeout_ms = sem_cfg.timeout_ms;
             let hi = sem_cfg.ambiguous_high;
             let fallback = sem_cfg.fallback.clone();
 
@@ -235,13 +237,15 @@ pub fn scan_chunks(chunks: &[DiffChunk], cfg: &Config) -> Vec<ScanResult> {
                     continue; // below the reporting floor
                 }
                 if sent < MAX_AMBIGUOUS && cand.confidence < hi {
-                    // Worth the L3 round-trip.
+                    // Worth the L3 round-trip. Announce an off-box endpoint
+                    // before the first snippet actually leaves.
+                    backend.warn_once_if_remote();
                     sent += 1;
-                    let ep = endpoint.clone();
+                    let be = backend.clone();
                     let fb = fallback.clone();
                     handles.push(std::thread::spawn(move || -> Option<ScanResult> {
                         let code = cand.snippet.as_deref().unwrap_or("").to_string();
-                        let sem = semantic::classify(&code, &ep, timeout_ms);
+                        let sem = semantic::classify(&code, &be);
                         if sem.skipped {
                             if fb != "clean" {
                                 let mut c = cand;

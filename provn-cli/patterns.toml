@@ -570,3 +570,69 @@ confidence = 0.60
 regex = '''(?i)(?:://|@|=\s*["'`]?|["'`])([a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.(?:internal|intranet|corp|lan)|[a-z0-9][a-z0-9-]*(?:\.[a-z0-9-]+)*\.svc\.cluster\.local)\b'''
 redact = "PROVN_REDACTED_INTERNAL_HOST"
 secret_group = 1
+
+# ── Proprietary-IP signals ────────────────────────────────────────────────────
+#
+# The rules above find *locations* (buckets, hosts). These find the other half
+# of an IP leak: content that is marked confidential, model/prompt material that
+# is meant to stay private, and safety controls being switched off. All sit at
+# T2 in the ambiguous band for the same reason — they are strong review signals
+# but weak block signals, and Layer 3 adjudicates them when it is enabled.
+
+[[patterns]]
+id = "confidentiality_notice"
+description = "Explicit confidentiality notice — the text itself says this material is not for distribution"
+tier = "T2"
+confidence = 0.65
+regex = '''(?i)\b(trade\s+secrets?|(?:proprietary|company)\s+and\s+confidential|confidential\s+and\s+proprietary|do\s+not\s+distribute|internal\s+use\s+only|not\s+for\s+(?:public\s+)?(?:release|distribution))\b'''
+redact = "PROVN_REDACTED_CONFIDENTIAL"
+
+[[patterns]]
+id = "confidentiality_keyword"
+description = "Code marked confidential or proprietary"
+tier = "T2"
+confidence = 0.50
+regex = '''(?i)\b(confidential|proprietary)\b'''
+redact = "PROVN_REDACTED_CONFIDENTIAL"
+
+[[patterns]]
+id = "prompt_secrecy_instruction"
+description = "System-prompt text instructing the model to conceal its own instructions (proprietary prompt leak)"
+tier = "T2"
+confidence = 0.65
+regex = '''(?i)\b(?:never|do\s+not|don'?t)\s+(?:reveal|share|disclose|mention|repeat|tell)\b[^\n]{0,60}\b(?:instructions?|prompts?|these|this|that\s+you|you\s+are|it)\b'''
+redact = "PROVN_REDACTED_SYSTEM_PROMPT"
+
+[[patterns]]
+id = "private_data_path"
+description = "Filesystem path under a proprietary/private/confidential directory (possible dataset or model location leak)"
+tier = "T2"
+confidence = 0.55
+regex = '''(?i)(?:^|["'`\s=(\[,])((?:\./)?/(?:[\w.-]+/)*(?:proprietary|private|confidential|internal|restricted)/[\w./-]+)'''
+redact = "PROVN_REDACTED_PRIVATE_PATH"
+secret_group = 1
+
+[[patterns]]
+id = "safety_control_override"
+description = "Model safety or guardrail control being disabled in configuration"
+tier = "T2"
+confidence = 0.60
+regex = '''(?i)\b(guardrail_bypass|safety_override|bypass_(?:safety|guardrail|filter|moderation)|disable_(?:safety|guardrail|moderation)|content_policy\s*["']?\s*[:=]\s*["']permissive)'''
+redact = "PROVN_REDACTED_SAFETY_OVERRIDE"
+
+[[patterns]]
+id = "internal_identifier"
+description = "Quoted identifier naming an internal or private resource (internal model, dataset, or benchmark id)"
+tier = "T2"
+confidence = 0.50
+regex = '''(?i)["']([\w.-]*(?:internal|private)[_-][\w.-]+|[\w.-]+-(?:internal|private))["']'''
+redact = "PROVN_REDACTED_INTERNAL_ID"
+secret_group = 1
+
+[[patterns]]
+id = "model_training_config"
+description = "Fine-tuning or RLHF hyperparameters — proprietary training recipe"
+tier = "T2"
+confidence = 0.50
+regex = '''(?i)\b(lora_r|lora_alpha|kl_coeff|ppo_epochs|reward_model|base_model|pass_threshold)\b\s*["']?\s*[:=]'''
+redact = "PROVN_REDACTED_TRAINING_CONFIG"

@@ -6,7 +6,7 @@
 
 <p align="center"><strong>AI powered secret and IP leak detection that runs before code leaves your machine.</strong></p>
 
-<p align="center"><code>npm install -g provn-cli</code></p>
+<p align="center"><code>npm install -g @ashvinctrl/provn</code></p>
 <p align="center"><code>brew install ashvinctrl/tap/provn</code></p>
 
 Provn is a local first pre commit scanner that blocks secrets, API keys, tokens, private keys, and proprietary snippets before they land in git. Layer 1 and Layer 2 work immediately. Layer 3 AI is optional and installs separately.
@@ -16,7 +16,7 @@ Provn is a local first pre commit scanner that blocks secrets, API keys, tokens,
 ### CLI only
 
 ```bash
-npm install -g provn-cli
+npm install -g @ashvinctrl/provn
 ```
 
 ```bash
@@ -38,32 +38,17 @@ git commit -m "first protected commit"
 
 ### Add the AI layer later
 
-You do **not** need to clone the Provn repo to use Layer 3. Install the CLI first, then download the model separately from Hugging Face.
-
-Model page:
-[https://huggingface.co/ashvinctrl/provn-gemma4-e2b-q4km](https://huggingface.co/ashvinctrl/provn-gemma4-e2b-q4km)
-
-**macOS / Linux**
+Layer 3 is optional. Layers 1 and 2 do all the work above without it.
 
 ```bash
-brew install hf
-hf auth login
-mkdir -p ~/.provn/models
-hf download ashvinctrl/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models
-llama-server -m ~/.provn/models/provn-gemma4-e2b-q4km.gguf --host 127.0.0.1 --port 8080
+provn model install     # downloads NVIDIA Nemotron 3 Nano 4B (Q4_K_M, 2.8 GB)
+provn server start      # runs it on 127.0.0.1:8080
 provn server status
 ```
 
-**Windows PowerShell**
-
-```powershell
-pip install "huggingface_hub[cli]"
-hf auth login
-New-Item -ItemType Directory -Force "$HOME\.provn\models"
-hf download ashvinctrl/provn-gemma4-e2b-q4km provn-gemma4-e2b-q4km.gguf --local-dir "$HOME\.provn\models"
-llama-server -m "$HOME\.provn\models\provn-gemma4-e2b-q4km.gguf" --host 127.0.0.1 --port 8080
-provn server status
-```
+No Hugging Face account, no `hf` CLI, no login. `provn model list` shows what
+is available and what is already on disk. You do need `llama-server`
+(llama.cpp) on PATH — `brew install llama.cpp`.
 
 
 ## Quick Start
@@ -107,17 +92,26 @@ provn                          Status dashboard with layers, hook, and server st
 provn check <path>             Scan a file OR directory tree for secrets or IP leaks
 provn check --format sarif <p> SARIF 2.1.0 output for GitHub Code Scanning
 provn check --json <path>      Machine readable JSON for CI
+provn check --fail-on T0,T1    Fail only on the listed tiers (default: any finding)
 provn scan                     Scan staged git changes (pre-commit hook mode)
 provn scan --fail-on T0,T1     Exit non-zero on listed tiers, never prompt (CI-safe)
 provn scan --auto-redact       Redact blocked findings without prompting
 provn scan --json              Emit findings as JSON lines
 provn check-range <old> <new>  Scan a commit range (pre-push hook mode)
+provn check-range --format sarif  SARIF for a diff, for PR-scoped code scanning
 provn scan-history             Scan all of git history for secrets ever committed
 provn baseline [path]          Accept current findings so only new ones are flagged
+provn model list               Show available Layer 3 models and what is installed
+provn model install [id]       Download a Layer 3 model into ~/.provn/models
 provn server start|stop|status Manage the Layer 3 AI model server
 provn install [--pre-push]     Install the pre-commit hook (and optional push gate)
 provn verify-audit             Verify the HMAC audit log chain
 ```
+
+`--fail-on` means different things by design: on `check` / `check-range` it
+*narrows* failure to the listed tiers (without it, any finding fails), while on
+`scan` it additionally suppresses the interactive redaction prompt so a hook is
+safe to run headless.
 
 ### Adopting Provn on an existing repo
 
@@ -153,7 +147,7 @@ Provn runs three detection layers in sequence:
 
 | Layer | Method | Latency | Catches |
 |-------|--------|---------|---------|
-| 1a | Regex patterns — 65 built-in rules + NFKC normalization + split-string reassembly | <5ms | AWS/Azure/GCP keys, GitHub/GitLab tokens, Stripe/Square, Slack/Twilio/SendGrid, OpenAI/Anthropic/HF, Terraform/Databricks/Doppler, Postman/Linear/Notion/Atlassian, PlanetScale/Supabase, DB URLs, private keys, mnemonics, object-storage URIs, internal hostnames |
+| 1a | Regex patterns — 72 built-in rules + NFKC normalization + split-string reassembly | <5ms | AWS/Azure/GCP keys, GitHub/GitLab tokens, Stripe/Square, Slack/Twilio/SendGrid, OpenAI/Anthropic/HF, Terraform/Databricks/Doppler, Postman/Linear/Notion/Atlassian, PlanetScale/Supabase, DB URLs, private keys, mnemonics, object-storage URIs, internal hostnames, confidentiality notices, prompt-secrecy instructions, private data paths, safety-control overrides, training configs |
 | 1b | Shannon entropy analysis with per-extension thresholds + allowlist | <5ms | High-entropy strings in assignments, hex-encoded secrets |
 | 2  | Tree-sitter AST analysis | <50ms | `system_prompt = "..."`, `const apiKey = "..."`, `apiKey := "..."` in Python / JS / TS / TSX / Go / Java <!-- provn:allow --> |
 | 3  | Gemma 4 E2B (on-device, optional) | <800ms | Ambiguous IP leaks in the 0.4–0.8 confidence band |
@@ -178,51 +172,111 @@ checksums, UUIDs, bcrypt hashes, base64 PNG headers, and semver strings.
 
 ## CI / GitHub Actions
 
-Use the workflow in [`.github/workflows/provn-ci.yml`](.github/workflows/provn-ci.yml) as the current source of truth.
-
-If you want a simple manual CI step today, build from source inside the workflow:
+Provn ships as a reusable action, so adopting it is three lines. It downloads
+the released binary and verifies its published SHA-256 — no Rust toolchain, no
+build step:
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: actions-rust-lang/setup-rust-toolchain@v1
-  with:
-    toolchain: stable
-- name: Build Provn
-  run: cd provn-cli && cargo build --release
-- name: Scan changed file
-  run: ./provn-cli/target/release/provn check --json path/to/file
+  with: { fetch-depth: 0 }   # check-range needs both sides of the diff
+- uses: ashvinctrl/Provn@v1
 ```
 
-The built-in workflow can publish the npm package on release when npm publishing is configured.
+By default it scans only what the push or pull request adds and fails on T0/T1.
+To scan the whole tree and publish to GitHub Code Scanning:
+
+```yaml
+- uses: ashvinctrl/Provn@v1
+  with:
+    scan: path
+    path: .
+    sarif-file: provn.sarif
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: provn.sarif
+```
+
+| Input | Default | Meaning |
+|-------|---------|---------|
+| `version` | `latest` | Release tag to run |
+| `scan` | `diff` | `diff` (push/PR changes) or `path` (full tree) |
+| `path` | `.` | What to scan when `scan: path` |
+| `fail-on` | `T0,T1` | Tiers that fail the job; empty string reports only |
+| `sarif-file` | — | Write SARIF 2.1.0 here |
+| `config` | — | provn.yml to use |
+
+It sets two outputs, `findings` and `clean`.
+
+### pre-commit framework
+
+```yaml
+repos:
+  - repo: https://github.com/ashvinctrl/Provn
+    rev: v0.3.0
+    hooks:
+      - id: provn
+```
+
+Install the binary first — the hook runs it rather than building it.
 
 
 ## Layer 3 optional semantic AI
 
-Layer 3 runs a fine-tuned Gemma 4 E2B model locally. No data leaves your machine.
+Layer 3 adjudicates the ambiguous 0.4–0.8 confidence band — mostly unmarked
+proprietary algorithms, which no regex can recognise. It is optional, and off
+until you configure it.
+
+### Run it locally (default, nothing leaves your machine)
 
 ```bash
-# 1. Download the model
-mkdir -p ~/.provn/models
-# Place provn-gemma4-e2b-q4km.gguf in ~/.provn/models/
-
-# 2. Start the server (auto-restarts at login)
+provn model install     # NVIDIA Nemotron 3 Nano 4B, Q4_K_M, 2.8 GB, open weights
 provn server start
-
-# 3. Confirm it's online
 provn server status
 #   ●  Layer 3 online  ·  127.0.0.1:8080
 ```
 
-Enable in `provn.yml`:
+Then in `provn.yml`:
 
 ```yaml
 layers:
   semantic:
     enabled: true
-    model: provn-gemma4-e2b-q4km.gguf
+    model: NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf
     endpoint: http://localhost:8080
     timeout_ms: 2000
 ```
+
+`provn model list` shows every model Provn can fetch. Requires `llama-server`
+(llama.cpp) on PATH.
+
+### Or bring your own API key
+
+If you already pay for an OpenAI-compatible endpoint, point Layer 3 at it
+instead of hosting a model. Any provider speaking `/v1/chat/completions` works —
+NVIDIA NIM, OpenAI, or your own gateway.
+
+```yaml
+layers:
+  semantic:
+    enabled: true
+    endpoint: https://integrate.api.nvidia.com/v1
+    api_key_env: NVIDIA_API_KEY      # the variable NAME, never the key itself
+    api_model: nvidia/nemotron-3-nano-4b
+```
+
+```bash
+export NVIDIA_API_KEY=...
+```
+
+Two things to be clear about, because they cut against Provn's whole premise:
+
+- **This sends code off your machine.** Provn prints a warning the first time a
+  scan transmits to a non-loopback host, rather than doing it quietly. Layers 1
+  and 2 always stay local.
+- **The key is read from the environment, never from `provn.yml`.** The config
+  names a variable; it cannot hold a credential. `provn.yml` is committed to the
+  repository it protects, and a scanner whose own config file is a place to put
+  secrets would be a bad joke.
 
 
 ## Configuration
@@ -245,12 +299,14 @@ layers:
     sensitive_vars: [system_prompt, api_key, secret, password, token, private_key]
   semantic:
     enabled: false
-    model: provn-gemma4-e2b-q4km.gguf
+    model: NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf
     endpoint: http://localhost:8080
     timeout_ms: 2000
     fallback: layer1          # layer1 | clean
     ambiguous_low: 0.4
     ambiguous_high: 0.8
+    api_key_env:              # env var NAME for a hosted endpoint (see Layer 3)
+    api_model:                # model id to request from a hosted endpoint
 
 audit:
   enabled: true
@@ -278,7 +334,7 @@ cargo run --release -- bench tests/corpus/leakbench.jsonl
 ```
 
 All numbers below are the deterministic layers only (Layer 1+2, semantic model
-off), measured 2026-06-27.
+off), measured 2026-08-09.
 
 **Realistic corpus** ([`realistic.jsonl`](provn-cli/tests/corpus/realistic.jsonl)
 — 94 samples: 48 real-format secrets + 46 secret-adjacent clean snippets). This
@@ -289,7 +345,7 @@ is the representative real-world signal:
 | Secret recall | **100%** (48/48) |
 | Precision | **100%** |
 | False positive rate | 0% (0/46) |
-| Engine latency | sub-millisecond per snippet |
+| Engine latency | p50 0.71ms · p95 0.97ms per snippet |
 
 These numbers are on a small representative corpus, not a guarantee of perfect
 coverage on every real secret — but the gaps an earlier run surfaced are now
@@ -304,20 +360,25 @@ cases the offline layers are *not* expected to catch alone:
 
 | Metric | Value |
 |--------|-------|
-| Precision | 98.2% |
+| Precision | 98.8% |
 | False positive rate | 1.0% (1/104) |
-| Secret recall | 65.3% (32/49) — credential leaks |
-| IP / prompt recall | 30.3% (23/76) — structured IP now offline; the rest needs Layer 3 |
+| Secret recall | 67.3% (33/49) — credential leaks |
+| IP / prompt recall | 68.4% (52/76) — most IP now caught offline |
 
-The IP-recall lift (18.4% → 30.3%) comes from two structured detectors —
-object-storage URIs (`s3://`, `gs://`, `az://…`) and internal hostnames
-(`.internal`, `.corp`, `.svc.cluster.local`) — that catch proprietary
-data-location and topology leaks offline. The remaining IP misses are
-proprietary algorithms and system prompts, which stay a Layer 3 (semantic) job.
+IP recall went 18.4% → 30.3% → **68.4%** over two rounds of detector work, at an
+unchanged false positive rate. The first round found proprietary *locations*
+(object-storage URIs, internal hostnames). The second finds proprietary
+*content*: confidentiality notices, system prompts that instruct the model to
+conceal its own instructions, private dataset paths, disabled safety controls,
+internal resource identifiers, and fine-tuning hyperparameters. What still
+misses is unmarked proprietary algorithms — a scoring function with no comment
+saying it is confidential looks like ordinary arithmetic to a regex, and stays a
+Layer 3 (semantic) job.
 
 The regression gate in
 [`provn-cli/tests/leakbench.rs`](provn-cli/tests/leakbench.rs) fails CI if recall
-drops or the false positive rate climbs on either corpus.
+drops, the false positive rate climbs, or per-snippet latency regresses by an
+order of magnitude on either corpus.
 
 End-to-end pre-commit latency (process start + `git diff` + scan) is ~30–50ms on a
 clean commit — run `provn scan` in a repo to measure it for your own tree.

@@ -1,7 +1,10 @@
 [package]
 name = "provn"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
+# Verified by the `msrv` CI job. Raised from the dependency floor: clap 4.6
+# requires edition2024 (1.85) and the icu_* crates reqwest pulls in require 1.86.
+rust-version = "1.86"
 description = "Provn pre-commit AI security scanner"
 
 [[bin]]

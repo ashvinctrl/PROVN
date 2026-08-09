@@ -4,6 +4,73 @@ All notable changes to Provn are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); this project uses
 [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-08-09
+
+### Added
+- **`provn model install` — Layer 3 in one command.** Enabling the semantic
+  layer previously meant installing the `hf` CLI, authenticating, creating a
+  directory, downloading a GGUF, and hand-editing config; in practice nobody did
+  it, so 30% IP recall was the real shipped product. The default model is now
+  **NVIDIA Nemotron 3 Nano 4B (Q4_K_M, 2.8 GB)**, which has open weights and
+  downloads over plain HTTPS with no account. `provn model list` shows what is
+  available and installed. Downloads stream to a `.part` file and are
+  length-checked before rename, so an interrupted transfer cannot leave a
+  truncated GGUF that looks installed.
+- **Bring-your-own API key for Layer 3.** `layers.semantic.api_key_env` +
+  `api_model` point the semantic layer at any OpenAI-compatible endpoint
+  (NVIDIA NIM, OpenAI, a private gateway) instead of a local server. The config
+  names an *environment variable*, never the key — `provn.yml` is committed to
+  the repo it protects and must never be somewhere a credential can land. Provn
+  prints a warning the first time a scan transmits to a non-loopback host rather
+  than silently breaking the local-first guarantee. Off by default.
+- **7 proprietary-IP content detectors** (65 → 72 rules):
+  `confidentiality_notice`, `confidentiality_keyword`,
+  `prompt_secrecy_instruction` (system prompts telling a model to conceal its
+  own instructions), `private_data_path`, `safety_control_override`,
+  `internal_identifier`, and `model_training_config`. Offline IP recall on the
+  adversarial corpus goes **30.3% (23/76) → 68.4% (52/76)** with the false
+  positive rate unchanged at 1.0% (1/104) and precision up 98.2% → 98.8% —
+  measured, not projected. Each ships with positive/negative unit cases.
+- **Reusable GitHub Action** (`uses: ashvinctrl/Provn@v1`) — downloads the
+  released binary, verifies its published SHA-256, and scans the push/PR diff or
+  the full tree. Supports SARIF output for GitHub Code Scanning.
+- **pre-commit framework support** via `.pre-commit-hooks.yaml`.
+- **`--fail-on` on `check` and `check-range`**, narrowing failure to chosen
+  tiers so a pipeline can surface T2 noise without going red.
+- **`--format sarif` on `check-range`**, so a PR-scoped diff can be uploaded to
+  Code Scanning (previously SARIF was full-tree only).
+- **Latency regression gate** — `leakbench.rs` now asserts on the p50/p95 that
+  `provn bench` already reported but nothing checked.
+- **MSRV pinned to 1.86**, verified by a dedicated CI job.
+
+### Fixed
+- **The Homebrew formula workflow could never run.** `update-homebrew.yml`
+  triggered on `release: [published]`, but that release is created by
+  `GITHUB_TOKEN`, and GitHub suppresses workflow triggers for events raised by
+  that token — so it had zero runs and the formula kept its placeholder SHAs. It
+  is now invoked directly from `release.yml` as a `needs: release` job, with
+  `workflow_dispatch` for manual re-runs.
+- **`provn server start` could not work on macOS.** It looked for a launchd
+  plist that nothing in Provn ever created, and failed on every clean install.
+  It now writes the launch agent itself, mirroring what the Linux path already
+  did with its systemd unit.
+- **The npm package installed nothing while reporting success.** `postinstall.js`
+  swallowed every failure and exited 0, leaving a `provn` command that could not
+  run. It now exits non-zero, rejects non-2xx responses instead of writing error
+  pages to disk, and verifies the downloaded archive against its published
+  `.sha256`.
+- npm package renamed to `@ashvinctrl/provn` — the old `provn-cli` name is owned
+  by a different account and was stuck at 0.0.1.
+- CI ran build and test on Linux only, with no clippy or `cargo fmt --check`,
+  despite shipping macOS and Windows binaries and carrying three
+  `cfg(target_os)`-split `cmd_server` implementations that nothing compiled. It
+  now runs a lint job plus a test matrix across Linux, macOS, and Windows.
+- The release workflow's tag/version consistency check only ran when npm
+  publishing was configured; it now always runs.
+- `provn server start` on Windows now prints the exact `llama-server` command
+  with the resolved model path and configured port, instead of a generic
+  "start it manually" message.
+
 ## [Unreleased]
 
 ### Added

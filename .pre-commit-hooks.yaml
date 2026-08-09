@@ -1,0 +1,29 @@
+# Hook definitions for the pre-commit framework (https://pre-commit.com).
+#
+# Add to a consuming repo's .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/ashvinctrl/Provn
+#       rev: v0.3.0
+#       hooks:
+#         - id: provn
+#
+# `language: system` because the Rust crate lives in provn-cli/ rather than at
+# the repository root, so pre-commit cannot build it itself. Install the binary
+# first (brew / npm / install.sh) and pre-commit will invoke it.
+
+- id: provn
+  name: Provn secret and IP leak scan
+  description: Block secrets, credentials, and proprietary IP from being committed.
+  entry: provn scan --fail-on T0,T1
+  language: system
+  # provn reads the staged diff from git itself, so it does not want the file
+  # list pre-commit would otherwise append to the command.
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+
+# No pre-push hook here on purpose: `provn check-range` needs an explicit
+# old/new ref pair, and pre-commit supplies those only as environment
+# variables, which an `entry` command cannot expand. Install the push gate with
+# `provn install --pre-push` instead.

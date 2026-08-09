@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
  * postinstall.js
- * Downloads the correct pre-built Provn binary from GitHub Releases
- * and places it in the package's bin/ directory.
+ * Downloads the correct pre-built Provn binary from GitHub Releases,
+ * verifies it against the published .sha256 asset, and places it in the
+ * package's bin/ directory.
  */
 
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const { execSync } = require("child_process");
 
 const REPO = "ashvinctrl/Provn";
 const BIN_DIR = path.join(__dirname, "bin");
+const MAX_REDIRECTS = 5;
 
 function getArtifact() {
   const platform = os.platform();
@@ -33,7 +36,11 @@ function getArtifact() {
   throw new Error(`Unsupported platform: ${platform} ${arch}`);
 }
 
-function fetchJson(url) {
+/**
+ * GET a URL, following redirects. `sink` receives the response stream on a
+ * 2xx; anything else rejects, so an error page is never mistaken for a payload.
+ */
+function get(url, sink, redirectsLeft = MAX_REDIRECTS) {
   return new Promise((resolve, reject) => {
     const opts = {
       headers: {
@@ -43,37 +50,66 @@ function fetchJson(url) {
     };
     https
       .get(url, opts, (res) => {
-        if (res.statusCode === 302 || res.statusCode === 301) {
-          return fetchJson(res.headers.location).then(resolve).catch(reject);
-        }
-        let data = "";
-        res.on("data", (d) => (data += d));
-        res.on("end", () => {
-          try {
-            resolve(JSON.parse(data));
-          } catch (err) {
-            reject(new Error(`Bad JSON from ${url}: ${err.message}`));
+        const { statusCode, headers } = res;
+
+        if (statusCode >= 300 && statusCode < 400 && headers.location) {
+          res.resume();
+          if (redirectsLeft === 0) {
+            return reject(new Error(`Too many redirects fetching ${url}`));
           }
-        });
+          return get(headers.location, sink, redirectsLeft - 1).then(resolve).catch(reject);
+        }
+
+        if (statusCode !== 200) {
+          res.resume();
+          return reject(new Error(`HTTP ${statusCode} fetching ${url}`));
+        }
+
+        sink(res).then(resolve).catch(reject);
       })
       .on("error", reject);
   });
 }
 
+function fetchText(url) {
+  return get(
+    url,
+    (res) =>
+      new Promise((resolve, reject) => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", (d) => (data += d));
+        res.on("end", () => resolve(data));
+        res.on("error", reject);
+      })
+  );
+}
+
+async function fetchJson(url) {
+  const body = await fetchText(url);
+  try {
+    return JSON.parse(body);
+  } catch (err) {
+    throw new Error(`Bad JSON from ${url}: ${err.message}`);
+  }
+}
+
 function download(url, dest) {
-  return new Promise((resolve, reject) => {
-    const opts = { headers: { "User-Agent": "provn-npm-installer" } };
-    https
-      .get(url, opts, (res) => {
-        if (res.statusCode === 302 || res.statusCode === 301) {
-          return download(res.headers.location, dest).then(resolve).catch(reject);
-        }
+  return get(
+    url,
+    (res) =>
+      new Promise((resolve, reject) => {
         const file = fs.createWriteStream(dest);
         res.pipe(file);
-        file.on("finish", () => file.close(resolve));
+        file.on("error", reject);
+        res.on("error", reject);
+        file.on("finish", () => file.close((err) => (err ? reject(err) : resolve())));
       })
-      .on("error", reject);
-  });
+  );
+}
+
+function sha256(file) {
+  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 }
 
 async function main() {
@@ -84,11 +120,12 @@ async function main() {
 
   const release = await fetchJson(`https://api.github.com/repos/${REPO}/releases/tags/${tag}`);
   const asset = release.assets?.find((entry) => entry.name === artifact);
+  const checksum = release.assets?.find((entry) => entry.name === `${artifact}.sha256`);
 
   if (!asset) {
     throw new Error(
-      `Binary not found in release ${tag}. ` +
-        `Falling back to build from source: https://github.com/${REPO}#install`
+      `no ${artifact} in release ${tag} of ${REPO}. ` +
+        `Build from source instead: https://github.com/${REPO}#install`
     );
   }
 
@@ -97,6 +134,17 @@ async function main() {
   process.stdout.write(`Downloading Provn ${tag} for ${os.platform()}/${os.arch()}...`);
   await download(asset.browser_download_url, tmpFile);
   process.stdout.write(" done\n");
+
+  // Every release publishes a matching .sha256 next to each archive. Verify it
+  // rather than trusting whatever the network handed back.
+  if (checksum) {
+    const expected = (await fetchText(checksum.browser_download_url)).trim().split(/\s+/)[0];
+    const actual = sha256(tmpFile);
+    if (expected.toLowerCase() !== actual.toLowerCase()) {
+      fs.unlinkSync(tmpFile);
+      throw new Error(`checksum mismatch for ${artifact}: expected ${expected}, got ${actual}`);
+    }
+  }
 
   const binPath = path.join(BIN_DIR, isWindows ? "provn.exe" : "provn");
   if (isWindows) {
@@ -109,10 +157,18 @@ async function main() {
   }
 
   fs.unlinkSync(tmpFile);
-  console.log(`  ✓  provn installed → ${binPath}`);
+
+  if (!fs.existsSync(binPath)) {
+    throw new Error(`archive ${artifact} did not contain the expected binary`);
+  }
+  console.log(`  provn installed → ${binPath}`);
 }
 
 main().catch((err) => {
   console.error(`\n  provn install failed: ${err.message}`);
   console.error(`  Install manually: https://github.com/${REPO}#install`);
+  // Exit non-zero so `npm install` reports the failure. Without this the
+  // install looks successful and leaves a package whose `provn` command
+  // cannot run.
+  process.exitCode = 1;
 });

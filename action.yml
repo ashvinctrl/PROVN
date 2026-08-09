@@ -1,0 +1,166 @@
+name: Provn leak scan
+description: Block secrets and proprietary IP from reaching your default branch, using the released Provn binary.
+branding:
+  icon: shield
+  color: purple
+
+inputs:
+  version:
+    description: 'Provn release tag to run, or "latest".'
+    required: false
+    default: latest
+  scan:
+    description: >-
+      What to scan. "diff" scans only what the push or pull request adds
+      (fast, and the right default for CI). "path" scans everything under
+      `path`, which is what you want for a scheduled full-tree audit.
+    required: false
+    default: diff
+  path:
+    description: Path to scan when `scan` is "path".
+    required: false
+    default: '.'
+  fail-on:
+    description: Comma-separated risk tiers that fail the job. Empty string never fails.
+    required: false
+    default: T0,T1
+  sarif-file:
+    description: >-
+      Write SARIF 2.1.0 results to this path for upload to GitHub Code
+      Scanning. Empty string disables SARIF output.
+    required: false
+    default: ''
+  config:
+    description: Path to a provn.yml. Defaults to the one in the repository root, if any.
+    required: false
+    default: ''
+
+outputs:
+  findings:
+    description: Number of findings reported.
+    value: ${{ steps.scan.outputs.findings }}
+  clean:
+    description: '"true" when no findings were reported.'
+    value: ${{ steps.scan.outputs.clean }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install Provn
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        REPO="ashvinctrl/Provn"
+
+        case "$(uname -s)" in
+          Darwin) [ "$(uname -m)" = "arm64" ] && ART=provn-aarch64-apple-darwin || ART=provn-x86_64-apple-darwin; EXT=.tar.gz ;;
+          Linux)  case "$(uname -m)" in
+                    x86_64)        ART=provn-x86_64-linux ;;
+                    aarch64|arm64) ART=provn-aarch64-linux ;;
+                    *) echo "::error::unsupported Linux arch $(uname -m)"; exit 1 ;;
+                  esac
+                  EXT=.tar.gz ;;
+          MINGW*|MSYS*|CYGWIN*) ART=provn-x86_64-windows; EXT=.zip ;;
+          *) echo "::error::unsupported runner OS $(uname -s)"; exit 1 ;;
+        esac
+
+        if [ "$VERSION" = "latest" ]; then
+          TAG=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+                "https://api.github.com/repos/$REPO/releases/latest" \
+                | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+        else
+          TAG="$VERSION"
+        fi
+        if [ -z "${TAG:-}" ]; then
+          echo "::error::could not resolve a Provn release tag"; exit 1
+        fi
+
+        TMP=$(mktemp -d)
+        URL="https://github.com/$REPO/releases/download/$TAG/${ART}${EXT}"
+        curl -fsSL "$URL" -o "$TMP/provn$EXT"
+
+        # Every release publishes a .sha256 beside each archive; a missing one
+        # means something is wrong with the release, so this does not fall back
+        # to trusting the download.
+        curl -fsSL "$URL.sha256" -o "$TMP/provn$EXT.sha256"
+        EXPECTED=$(awk '{print $1}' "$TMP/provn$EXT.sha256")
+        if command -v sha256sum >/dev/null 2>&1; then
+          ACTUAL=$(sha256sum "$TMP/provn$EXT" | awk '{print $1}')
+        else
+          ACTUAL=$(shasum -a 256 "$TMP/provn$EXT" | awk '{print $1}')
+        fi
+        if [ "$EXPECTED" != "$ACTUAL" ]; then
+          echo "::error::SHA-256 mismatch for $ART$EXT (expected $EXPECTED, got $ACTUAL)"; exit 1
+        fi
+
+        mkdir -p "$HOME/.provn/bin"
+        if [ "$EXT" = ".zip" ]; then
+          unzip -o -q "$TMP/provn$EXT" -d "$HOME/.provn/bin"
+        else
+          tar xzf "$TMP/provn$EXT" -C "$HOME/.provn/bin"
+        fi
+        chmod +x "$HOME/.provn/bin/provn"* 2>/dev/null || true
+        echo "$HOME/.provn/bin" >> "$GITHUB_PATH"
+        echo "Installed Provn $TAG"
+
+    - name: Run Provn
+      id: scan
+      shell: bash
+      env:
+        SCAN: ${{ inputs.scan }}
+        TARGET_PATH: ${{ inputs.path }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        SARIF_FILE: ${{ inputs.sarif-file }}
+        CONFIG: ${{ inputs.config }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        BEFORE_SHA: ${{ github.event.before }}
+      run: |
+        set -uo pipefail
+        [ -n "$CONFIG" ] && cp "$CONFIG" provn.yml
+
+        args=()
+        if [ "$SCAN" = "diff" ]; then
+          # A PR gives an explicit base; a push gives event.before, which is all
+          # zeroes for a branch's first push — fall back to a full-tree scan
+          # there rather than diffing against a commit that does not exist.
+          if [ -n "${BASE_SHA:-}" ]; then
+            OLD="$BASE_SHA"; NEW="$HEAD_SHA"
+          elif [ -n "${BEFORE_SHA:-}" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            OLD="$BEFORE_SHA"; NEW="$HEAD_SHA"
+          fi
+          if [ -n "${OLD:-}" ]; then
+            args=(check-range "$OLD" "$NEW")
+          else
+            echo "No usable diff base; scanning the full tree instead."
+            args=(check "$TARGET_PATH")
+          fi
+        else
+          args=(check "$TARGET_PATH")
+        fi
+
+        if [ -n "$SARIF_FILE" ]; then
+          provn "${args[@]}" --format sarif > "$SARIF_FILE" || true
+          echo "SARIF written to $SARIF_FILE"
+        fi
+
+        out=$(provn "${args[@]}" --json 2>&1)
+        status=$?
+        echo "$out"
+
+        findings=$(printf '%s' "$out" | grep -c '"tier"' || true)
+        echo "findings=$findings" >> "$GITHUB_OUTPUT"
+        if [ "$findings" -eq 0 ]; then
+          echo "clean=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "clean=false" >> "$GITHUB_OUTPUT"
+        fi
+
+        if [ -z "$FAIL_ON" ]; then
+          echo "fail-on is empty; reporting only."
+          exit 0
+        fi
+        exit $status

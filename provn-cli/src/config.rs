@@ -114,6 +114,18 @@ pub struct SemanticConfig {
     /// Upper bound — confident detections above this skip Layer 3
     #[serde(default = "default_ambiguous_high")]
     pub ambiguous_high: f64,
+    /// Name of an environment variable holding an API key for a remote
+    /// OpenAI-compatible endpoint (your own NVIDIA NIM / OpenAI / gateway key).
+    ///
+    /// This is the *name* of the variable, never the key: a provn.yml is
+    /// committed to the repo it protects, so it must never be able to hold a
+    /// credential. Leave unset for a purely local Layer 3.
+    #[serde(default)]
+    pub api_key_env: Option<String>,
+    /// Model identifier sent to a remote endpoint. Local llama-server ignores
+    /// it; hosted APIs require it.
+    #[serde(default)]
+    pub api_model: Option<String>,
 }
 
 impl Default for SemanticConfig {
@@ -126,6 +138,8 @@ impl Default for SemanticConfig {
             fallback: default_semantic_fallback(),
             ambiguous_low: default_ambiguous_low(),
             ambiguous_high: default_ambiguous_high(),
+            api_key_env: None,
+            api_model: None,
         }
     }
 }

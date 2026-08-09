@@ -134,10 +134,19 @@ layers:
       - master_key
   semantic:
     enabled: true
-    # Only triggered when Layer 1/2 confidence is ambiguous (0.4-0.8)
-    model: "provn-gemma4-e2b-q4km.gguf"
+    # Only triggered when Layer 1/2 confidence is ambiguous (0.4-0.8).
+    # Install with: provn model install   (see `provn model list`)
+    model: "NVIDIA-Nemotron3-Nano-4B-Q4_K_M.gguf"
     endpoint: "http://localhost:8080"
     timeout_ms: 2000
+    # To use a hosted OpenAI-compatible endpoint instead of a local server,
+    # set the endpoint above to it and name the environment variable holding
+    # your key. The key itself must never appear in this file — this config is
+    # committed to the repository it protects.
+    #   endpoint: "https://integrate.api.nvidia.com/v1"
+    #   api_key_env: NVIDIA_API_KEY
+    #   api_model: nvidia/nemotron-3-nano-4b
+    # Note that a hosted endpoint sends code snippets off this machine.
     # If model unavailable, fall back to Layer 1/2 result
     fallback: "layer1"
 

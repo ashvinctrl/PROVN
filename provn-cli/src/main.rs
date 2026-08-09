@@ -5,6 +5,7 @@ mod audit;
 mod baseline;
 mod config;
 mod diff;
+mod model;
 mod policy;
 mod redact;
 mod sarif;
@@ -73,6 +74,9 @@ enum Command {
         /// Output results as JSON (shorthand for --format json)
         #[arg(long, short = 'j')]
         json: bool,
+        /// Fail only on findings at these tiers (default: fail on any finding)
+        #[arg(long, value_delimiter = ',', value_name = "TIERS")]
+        fail_on: Vec<String>,
         /// Ignore the accepted-findings baseline (report everything)
         #[arg(long)]
         no_baseline: bool,
@@ -83,9 +87,15 @@ enum Command {
         old: String,
         /// New commit SHA being pushed
         new: String,
+        /// Output format: text | json | sarif
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
+        format: String,
         /// Output findings as JSON lines
         #[arg(long, short = 'j')]
         json: bool,
+        /// Fail only on findings at these tiers (default: fail on any finding)
+        #[arg(long, value_delimiter = ',', value_name = "TIERS")]
+        fail_on: Vec<String>,
         /// Ignore the accepted-findings baseline (report everything)
         #[arg(long)]
         no_baseline: bool,
@@ -118,6 +128,11 @@ enum Command {
         #[command(subcommand)]
         action: ServerAction,
     },
+    /// Download and manage Layer 3 models
+    Model {
+        #[command(subcommand)]
+        action: ModelAction,
+    },
     /// Measure detection accuracy against a labeled LeakBench corpus (JSONL)
     Bench {
         /// Path to the corpus JSONL (default: bundled tests/corpus/leakbench.jsonl)
@@ -129,6 +144,21 @@ enum Command {
         /// Extension each snippet is scanned as (sets entropy thresholds + AST language)
         #[arg(long, default_value = "py")]
         ext: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum ModelAction {
+    /// Show available Layer 3 models and which are already installed
+    List,
+    /// Download a Layer 3 model into ~/.provn/models
+    Install {
+        /// Model id from `provn model list` (default: the open-weights model)
+        #[arg(value_name = "ID")]
+        id: Option<String>,
+        /// Re-download even if the file is already present
+        #[arg(long)]
+        force: bool,
     },
 }
 
@@ -173,22 +203,29 @@ fn run() -> i32 {
             file,
             format,
             json,
+            fail_on,
             no_baseline,
         }) => {
             let fmt = if json { "json" } else { format.as_str() };
-            cmd_check(&file, fmt, no_baseline)
+            cmd_check(&file, fmt, &fail_on, no_baseline)
         }
         Some(Command::CheckRange {
             old,
             new,
+            format,
             json,
+            fail_on,
             no_baseline,
-        }) => cmd_check_range(&old, &new, json, no_baseline),
+        }) => {
+            let fmt = if json { "json" } else { format.as_str() };
+            cmd_check_range(&old, &new, fmt, &fail_on, no_baseline)
+        }
         Some(Command::ScanHistory { max_commits, json }) => cmd_scan_history(max_commits, json),
         Some(Command::Baseline { path }) => cmd_baseline(&path),
         Some(Command::VerifyAudit) => cmd_verify_audit(),
         Some(Command::Install { pre_push }) => cmd_install(pre_push),
         Some(Command::Server { action }) => cmd_server(action),
+        Some(Command::Model { action }) => cmd_model(action),
         Some(Command::Bench { corpus, json, ext }) => cmd_bench(&corpus, json, &ext),
     }
 }
@@ -198,6 +235,27 @@ struct ScanOpts {
     auto_redact: bool,
     json: bool,
     no_baseline: bool,
+}
+
+/// Exit-code policy for the report-only commands (`check`, `check-range`).
+///
+/// With no `--fail-on`, any surviving finding fails — the default a pre-push
+/// gate wants. With `--fail-on T0,T1`, only findings at those tiers fail, so a
+/// pipeline can surface T2 entropy noise without going red on it. This is a
+/// filter, unlike `scan --fail-on`, which additionally suppresses prompting and
+/// leaves policy blocks failing regardless.
+fn fails_build(findings: &[scanner::ScanResult], fail_on: &[String]) -> bool {
+    if findings.is_empty() {
+        return false;
+    }
+    if fail_on.is_empty() {
+        return true;
+    }
+    findings.iter().any(|f| {
+        f.tier
+            .as_deref()
+            .is_some_and(|t| fail_on.iter().any(|w| w.eq_ignore_ascii_case(t)))
+    })
 }
 
 /// Load the baseline unless suppression is disabled. A missing/invalid baseline
@@ -405,11 +463,19 @@ fn cmd_scan(opts: &ScanOpts) -> i32 {
 }
 
 // ── Check range (pre-push) ─────────────────────────────────────────────────────
-fn cmd_check_range(old: &str, new: &str, json: bool, no_baseline: bool) -> i32 {
+fn cmd_check_range(old: &str, new: &str, fmt: &str, fail_on: &[String], no_baseline: bool) -> i32 {
     let cfg = config::load().unwrap_or_default();
+    let sarif = fmt.eq_ignore_ascii_case("sarif");
     let chunks = match diff::parse_range_diff(old, new, &cfg) {
         Ok(c) => c,
         Err(e) => {
+            if sarif {
+                // A SARIF consumer expects a valid report on stdout no matter
+                // what; an empty run is the honest representation of "nothing
+                // could be scanned".
+                println!("{}", sarif::render(&[]));
+                return 0;
+            }
             eprintln!(
                 "{}provn  could not read range diff: {e} — allowing push{}",
                 DIM, RESET
@@ -417,10 +483,27 @@ fn cmd_check_range(old: &str, new: &str, json: bool, no_baseline: bool) -> i32 {
             return 0;
         }
     };
+
+    // SARIF is a report format, not an interactive gate — render and exit
+    // rather than going through the prompt/redact path.
+    if sarif {
+        let mut findings = scanner::scan_chunks(&chunks, &cfg);
+        let baseline = load_baseline(&cfg, no_baseline);
+        if !baseline.is_empty() {
+            findings.retain(|f| !baseline.contains(f));
+        }
+        println!("{}", sarif::render(&findings));
+        return if fails_build(&findings, fail_on) {
+            1
+        } else {
+            0
+        };
+    }
+
     let opts = ScanOpts {
-        fail_on: Vec::new(),
+        fail_on: fail_on.to_vec(),
         auto_redact: false,
-        json,
+        json: fmt.eq_ignore_ascii_case("json"),
         no_baseline,
     };
     // Pushed commits are immutable — redaction prompts make no sense here.
@@ -852,7 +935,7 @@ fn print_bench_list(title: &str, items: &[String]) {
     }
 }
 
-fn cmd_check(file: &str, fmt: &str, no_baseline: bool) -> i32 {
+fn cmd_check(file: &str, fmt: &str, fail_on: &[String], no_baseline: bool) -> i32 {
     let cfg = config::load().unwrap_or_default();
     let json = fmt.eq_ignore_ascii_case("json");
     let sarif = fmt.eq_ignore_ascii_case("sarif");
@@ -896,10 +979,11 @@ fn cmd_check(file: &str, fmt: &str, no_baseline: bool) -> i32 {
         findings.retain(|f| !baseline.contains(f));
     }
     let clean = findings.is_empty();
+    let failed = fails_build(&findings, fail_on);
 
     if sarif {
         println!("{}", sarif::render(&findings));
-        return if clean { 0 } else { 1 };
+        return if failed { 1 } else { 0 };
     }
 
     if json {
@@ -928,7 +1012,7 @@ fn cmd_check(file: &str, fmt: &str, no_baseline: bool) -> i32 {
                 "latency_ms": latency,
             })
         );
-        return if clean { 0 } else { 1 };
+        return if failed { 1 } else { 0 };
     }
 
     if clean {
@@ -961,7 +1045,161 @@ fn cmd_check(file: &str, fmt: &str, no_baseline: bool) -> i32 {
         println!("  {}✗  [{}]{}  {}{}{}", RED, tier, RESET, desc, layer, loc);
     }
 
-    1
+    if failed {
+        1
+    } else {
+        0
+    }
+}
+
+// ── Layer 3 models ───────────────────────────────────────────────────────────
+fn cmd_model(action: ModelAction) -> i32 {
+    match action {
+        ModelAction::List => cmd_model_list(),
+        ModelAction::Install { id, force } => cmd_model_install(id.as_deref(), force),
+    }
+}
+
+fn cmd_model_list() -> i32 {
+    let dir = model::models_dir();
+    eprintln!();
+    eprintln!("  {}Layer 3 models{}  {}", BOLD, RESET, dim!(dir.display()));
+    eprintln!();
+    for m in model::REGISTRY {
+        let installed = dir.join(m.file).exists();
+        let mark = if installed {
+            format!("{GREEN}●{RESET}")
+        } else {
+            format!("{DIM}○{RESET}")
+        };
+        eprintln!("  {mark}  {}{}{}", BOLD, m.id, RESET);
+        eprintln!("     {}", dim!(m.name));
+        eprintln!(
+            "     {}",
+            dim!(format!(
+                "{}  ·  {}{}",
+                m.size_label(),
+                m.notes,
+                if installed { "  ·  installed" } else { "" }
+            ))
+        );
+        eprintln!();
+    }
+    eprintln!("  {}provn model install <id>{}", DIM, RESET);
+    eprintln!();
+    0
+}
+
+fn cmd_model_install(id: Option<&str>, force: bool) -> i32 {
+    // No id given → the first registry entry, which is deliberately the one
+    // that needs no account.
+    let spec = match id {
+        Some(want) => match model::find(want) {
+            Some(s) => s,
+            None => {
+                eprintln!("  {}✗  unknown model{}  {want}", RED, RESET);
+                eprintln!("  {}provn model list{}", DIM, RESET);
+                return 1;
+            }
+        },
+        None => &model::REGISTRY[0],
+    };
+
+    let dest = model::models_dir().join(spec.file);
+
+    if dest.exists() && !force {
+        eprintln!();
+        eprintln!(
+            "  {}●  already installed{}  {}",
+            GREEN,
+            RESET,
+            dim!(dest.display())
+        );
+        eprintln!("  {}re-download with --force{}", DIM, RESET);
+        eprintln!();
+        print_enable_instructions(spec);
+        return 0;
+    }
+
+    eprintln!();
+    eprintln!("  {}Installing {}{}", BOLD, spec.name, RESET);
+    eprintln!("  {}", dim!(spec.url()));
+    eprintln!("  {}", dim!(format!("→ {}", dest.display())));
+    if spec.needs_auth {
+        eprintln!();
+        eprintln!(
+            "  {}note{}  {}",
+            YELLOW,
+            RESET,
+            dim!("this repo needs Hugging Face credentials; the download will fail without them")
+        );
+    }
+    eprintln!();
+
+    let mut last_pct = u64::MAX;
+    let result = model::download(spec, &dest, |written, total| {
+        // Only repaint on a whole-percent change — a 2.8 GB file is ~2700
+        // callbacks per percent otherwise.
+        match total {
+            Some(t) if t > 0 => {
+                let pct = written * 100 / t;
+                if pct != last_pct {
+                    last_pct = pct;
+                    eprint!(
+                        "\r  downloading  {pct:>3}%  {} / {}",
+                        model::human_bytes(written),
+                        model::human_bytes(t)
+                    );
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
+                }
+            }
+            _ => {
+                let mb = written / (1 << 20);
+                if mb != last_pct {
+                    last_pct = mb;
+                    eprint!("\r  downloading  {}", model::human_bytes(written));
+                    let _ = std::io::Write::flush(&mut std::io::stderr());
+                }
+            }
+        }
+    });
+    eprintln!();
+
+    match result {
+        Ok(()) => {
+            eprintln!();
+            eprintln!("  {}✓  installed{}  {}", GREEN, RESET, dim!(dest.display()));
+            eprintln!();
+            print_enable_instructions(spec);
+            0
+        }
+        Err(e) => {
+            eprintln!();
+            eprintln!("  {}✗  download failed{}  {e}", RED, RESET);
+            eprintln!();
+            1
+        }
+    }
+}
+
+/// Print what still has to happen for Layer 3 to actually run. Provn does not
+/// edit the user's provn.yml for them — a scanner that silently rewrites config
+/// is a scanner people stop trusting.
+fn print_enable_instructions(spec: &model::ModelSpec) {
+    eprintln!("  {}Enable Layer 3{}", BOLD, RESET);
+    eprintln!("  {}1. add to provn.yml:{}", DIM, RESET);
+    eprintln!("       layers:");
+    eprintln!("         semantic:");
+    eprintln!("           enabled: true");
+    eprintln!("           model: {}", spec.file);
+    eprintln!("  {}2. start the server:{}  provn server start", DIM, RESET);
+    eprintln!("  {}3. confirm:{}          provn server status", DIM, RESET);
+    eprintln!();
+    eprintln!(
+        "  {}",
+        dim!("requires llama-server (llama.cpp) on PATH — brew install llama.cpp")
+    );
+    eprintln!();
 }
 
 // ── Scan history ─────────────────────────────────────────────────────────────
@@ -1197,6 +1435,62 @@ fn cmd_install(pre_push: bool) -> i32 {
 #[cfg(target_os = "macos")]
 const PLIST_LABEL: &str = "com.provn.semantic-server";
 
+/// Port from a configured endpoint URL ("http://localhost:8080" → 8080),
+/// falling back to llama-server's default.
+fn endpoint_port(endpoint: &str) -> u16 {
+    endpoint
+        .rsplit(':')
+        .next()
+        .and_then(|s| s.trim_matches('/').parse().ok())
+        .unwrap_or(8080)
+}
+
+/// Write the launchd user agent that runs llama-server for Layer 3.
+#[cfg(target_os = "macos")]
+fn write_launch_agent(plist_path: &str, model_path: &str, port: u16) -> std::io::Result<()> {
+    if let Some(parent) = std::path::Path::new(plist_path).parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let llama_bin = which_bin("llama-server");
+    let content = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{PLIST_LABEL}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{llama_bin}</string>
+    <string>-m</string><string>{model_path}</string>
+    <string>--host</string><string>127.0.0.1</string>
+    <string>--port</string><string>{port}</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><false/>
+  <key>StandardOutPath</key><string>/tmp/provn-semantic-server.log</string>
+  <key>StandardErrorPath</key><string>/tmp/provn-semantic-server.log</string>
+</dict>
+</plist>
+"#
+    );
+    std::fs::write(plist_path, content)
+}
+
+/// Absolute path to a binary on PATH, or the bare name so the OS reports a
+/// clear "not found" itself.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+fn which_bin(name: &str) -> String {
+    std::process::Command::new("which")
+        .arg(name)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| name.to_string())
+}
+
 #[cfg(target_os = "linux")]
 const SERVICE_UNIT: &str = "provn-semantic";
 
@@ -1236,14 +1530,21 @@ fn cmd_server(action: ServerAction) -> i32 {
 
     match action {
         ServerAction::Start => {
+            let cfg = config::load().unwrap_or_default();
+            let model_path = model::resolve_path(&cfg.layers.semantic.model);
+            let port = endpoint_port(&cfg.layers.semantic.endpoint);
+
             eprintln!();
             eprintln!("  {}Layer 3  ·  Semantic AI{}", BOLD, RESET);
             eprintln!(
-                "  {}model   {}Gemma 4 E2B · fine-tuned on LeakBench · Q4_K_M{}",
-                DIM, RESET, DIM
+                "  {}model   {}{}{}",
+                DIM,
+                RESET,
+                cfg.layers.semantic.model.trim(),
+                DIM
             );
             eprintln!(
-                "  {}scope   {}ambiguous detections only  (confidence 40 – 80 %%){}",
+                "  {}scope   {}ambiguous detections only  (confidence 40 – 80 %){}",
                 DIM, RESET, DIM
             );
             eprintln!(
@@ -1253,17 +1554,39 @@ fn cmd_server(action: ServerAction) -> i32 {
             eprintln!();
 
             if server_healthy() {
-                eprintln!("  {}●  already online{}  ·  127.0.0.1:8080", GREEN, RESET);
+                eprintln!("  {}●  already online{}  ·  127.0.0.1:{port}", GREEN, RESET);
                 eprintln!();
                 return 0;
             }
 
-            if !std::path::Path::new(&plist).exists() {
-                eprintln!("  {}✗  launchd plist not found{}", RED, RESET);
-                eprintln!("  expected: {}", dim!(&plist));
+            if !model_path.exists() {
+                eprintln!(
+                    "  {}✗  model not found{}  {}",
+                    RED,
+                    RESET,
+                    dim!(model_path.display())
+                );
+                eprintln!("  {}Download it first:{}  provn model install", DIM, RESET);
                 eprintln!();
                 return 1;
             }
+
+            // Write the launch agent rather than requiring the user to have
+            // hand-authored one: previously this path only ever *looked* for a
+            // plist that nothing in Provn created, so `server start` could not
+            // succeed on a clean install.
+            if let Err(e) = write_launch_agent(&plist, &model_path.to_string_lossy(), port) {
+                eprintln!("  {}✗  cannot write launch agent{}  {e}", RED, RESET);
+                eprintln!("  {}", dim!(&plist));
+                eprintln!();
+                return 1;
+            }
+
+            // Re-bootstrapping an already-loaded label fails; drop it first so
+            // a config change (new model or port) actually takes effect.
+            let _ = std::process::Command::new("launchctl")
+                .args(["bootout", &domain, &plist])
+                .output();
 
             eprint!("  starting");
             let out = std::process::Command::new("launchctl")
@@ -1272,7 +1595,7 @@ fn cmd_server(action: ServerAction) -> i32 {
 
             match out {
                 Ok(o) if o.status.success() => {
-                    eprintln!("  {}●  online{}  ·  127.0.0.1:8080", GREEN, RESET);
+                    eprintln!("  {}●  online{}  ·  127.0.0.1:{port}", GREEN, RESET);
                     eprintln!(
                         "  {}model loads in ~25 s  ·  provn server status to confirm{}",
                         DIM, RESET
@@ -1366,18 +1689,9 @@ fn linux_server_start() -> i32 {
         return 0;
     }
 
-    // Resolve model: use config value as-is if absolute or already exists,
-    // otherwise look in ~/.provn/models/<name>.
-    let model_path = {
-        let raw = cfg.layers.semantic.model.trim().to_string();
-        let p = std::path::Path::new(&raw);
-        if p.is_absolute() || p.exists() {
-            raw
-        } else {
-            let home = std::env::var("HOME").unwrap_or_default();
-            format!("{home}/.provn/models/{raw}")
-        }
-    };
+    let model_path = model::resolve_path(&cfg.layers.semantic.model)
+        .to_string_lossy()
+        .into_owned();
 
     if !std::path::Path::new(&model_path).exists() {
         eprintln!(
@@ -1386,35 +1700,13 @@ fn linux_server_start() -> i32 {
             RESET,
             dim!(&model_path)
         );
-        eprintln!("  {}Download it first:", DIM);
-        eprintln!("    hf download ashvinctrl/provn-gemma4-e2b-q4km \\");
-        eprintln!(
-            "      provn-gemma4-e2b-q4km.gguf --local-dir ~/.provn/models{}",
-            RESET
-        );
+        eprintln!("  {}Download it first:{}  provn model install", DIM, RESET);
         eprintln!();
         return 1;
     }
 
-    // Find llama-server on PATH; fall back to bare name and let the OS error.
-    let llama_bin = std::process::Command::new("which")
-        .arg("llama-server")
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .and_then(|o| String::from_utf8(o.stdout).ok())
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| "llama-server".to_string());
-
-    // Extract port from endpoint URL (e.g. "http://localhost:8080" → 8080).
-    let port: u16 = cfg
-        .layers
-        .semantic
-        .endpoint
-        .rsplit(':')
-        .next()
-        .and_then(|s| s.trim_matches('/').parse().ok())
-        .unwrap_or(8080);
+    let llama_bin = which_bin("llama-server");
+    let port = endpoint_port(&cfg.layers.semantic.endpoint);
 
     // Write a systemd user service unit — no root required.
     let home = std::env::var("HOME").unwrap_or_default();
@@ -1520,24 +1812,44 @@ fn cmd_server(action: ServerAction) -> i32 {
     match action {
         ServerAction::Status => print_server_status(),
         ServerAction::Start => {
+            let cfg = config::load().unwrap_or_default();
+            let port = endpoint_port(&cfg.layers.semantic.endpoint);
+
             eprintln!();
             if server_healthy() {
-                eprintln!("  {}●  already online{}  ·  127.0.0.1:8080", GREEN, RESET);
+                eprintln!("  {}●  already online{}  ·  127.0.0.1:{port}", GREEN, RESET);
                 eprintln!();
                 return 0;
             }
             eprintln!("  {}Layer 3  ·  Semantic AI{}", BOLD, RESET);
             eprintln!(
-                "  {}auto-start is not yet supported on this platform{}",
+                "  {}there is no supervised service to attach to on this platform{}",
                 YELLOW, RESET
             );
+            eprintln!();
+
+            // Even without a service manager, the command can be exact rather
+            // than leaving the user to reconstruct it from the docs.
+            let model_path = model::resolve_path(&cfg.layers.semantic.model);
+            if !model_path.exists() {
+                eprintln!(
+                    "  {}✗  model not found{}  {}",
+                    RED,
+                    RESET,
+                    dim!(model_path.display())
+                );
+                eprintln!("  {}Download it first:{}  provn model install", DIM, RESET);
+                eprintln!();
+                return 1;
+            }
+
             eprintln!(
-                "  {}Start llama-server manually, then run {}provn server status{}{}",
-                DIM, CYAN, RESET, DIM
+                "  {}Run this, then {}provn server status{}",
+                DIM, CYAN, RESET
             );
             eprintln!(
-                "  {}https://github.com/ashvinctrl/Provn#layer-3-semantic-ai{}",
-                DIM, RESET
+                "    llama-server -m \"{}\" --host 127.0.0.1 --port {port}",
+                model_path.display()
             );
             eprintln!();
             1

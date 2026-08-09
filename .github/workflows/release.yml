@@ -135,7 +135,7 @@ jobs:
             echo
             echo "**npm**"
             echo '```bash'
-            echo "npm install -g provn-cli"
+            echo "npm install -g @ashvinctrl/provn"
             echo '```'
             echo
             echo "**Homebrew**"
@@ -168,6 +168,18 @@ jobs:
           fail_on_unmatched_files: false
           generate_release_notes: true
 
+  # Called directly rather than letting update-homebrew.yml listen for
+  # `release: [published]` — that event is raised by the GITHUB_TOKEN used above,
+  # and GitHub does not start workflows from GITHUB_TOKEN-raised events, so the
+  # listener would never fire.
+  homebrew:
+    name: Update Homebrew formula
+    needs: release
+    uses: ./.github/workflows/update-homebrew.yml
+    with:
+      tag: ${{ github.ref_name }}
+    secrets: inherit
+
   publish-npm:
     name: Publish npm package
     needs: release
@@ -194,8 +206,10 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
 
+      # Unconditional: a tag that disagrees with the packaged version is a
+      # release bug worth failing on even when npm publishing is not configured,
+      # because the npm postinstall resolves its download by `v${version}`.
       - name: Verify tag matches package version
-        if: steps.npm_auth.outputs.enabled == 'true'
         run: |
           TAG="${GITHUB_REF_NAME#v}"
           PKG_VERSION=$(node -p "require('./npm/package.json').version")

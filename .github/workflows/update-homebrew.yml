@@ -1,11 +1,28 @@
 name: Update Homebrew Formula
 
+# Deliberately NOT triggered by `release: [published]`. The release is created by
+# release.yml using the built-in GITHUB_TOKEN, and GitHub suppresses workflow
+# triggers for events raised by that token (loop prevention) — so a `release`
+# trigger here would never fire. Instead release.yml calls this workflow
+# directly via `workflow_call` once the release job succeeds, and
+# `workflow_dispatch` is kept for re-running it by hand against any tag.
 on:
-  release:
-    types: [published]
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to publish to the tap (e.g. v0.3.0)
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish to the tap (e.g. v0.3.0)
+        required: true
+        type: string
 
 jobs:
   update-formula:
+    name: Publish formula to homebrew-tap
     runs-on: ubuntu-latest
     steps:
       - name: Check Homebrew publishing is configured
@@ -17,27 +34,30 @@ jobs:
             echo "enabled=true" >> $GITHUB_OUTPUT
           else
             echo "enabled=false" >> $GITHUB_OUTPUT
-            echo "TAP_GITHUB_TOKEN not configured; skipping Homebrew formula update."
+            echo "::warning::TAP_GITHUB_TOKEN not configured; skipping Homebrew formula update."
           fi
 
-      - name: Get release info
+      - name: Resolve version from tag
         if: steps.tap_auth.outputs.enabled == 'true'
         id: release
+        env:
+          TAG: ${{ inputs.tag }}
         run: |
-          TAG="${{ github.event.release.tag_name }}"
-          VERSION="${TAG#v}"
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=${TAG#v}" >> $GITHUB_OUTPUT
 
       - name: Download release assets and compute SHA-256
         if: steps.tap_auth.outputs.enabled == 'true'
         id: sha
         run: |
-          BASE="https://github.com/ashvinctrl/Provn/releases/download/${{ steps.release.outputs.tag }}"
+          BASE="https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.tag }}"
 
           download_sha() {
-            local name=$1
-            curl -fsSL "$BASE/$name" -o "/tmp/$name"
+            name=$1
+            # --retry covers the brief window where assets are still settling
+            # on the CDN right after the release job publishes them.
+            curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+              "$BASE/$name" -o "/tmp/$name"
             sha256sum "/tmp/$name" | awk '{print $1}'
           }
 
@@ -59,7 +79,7 @@ jobs:
         if: steps.tap_auth.outputs.enabled == 'true'
         uses: actions/checkout@v4
         with:
-          repository: ashvinctrl/homebrew-tap
+          repository: ${{ github.repository_owner }}/homebrew-tap
           token: ${{ secrets.TAP_GITHUB_TOKEN }}
           path: homebrew-tap
 

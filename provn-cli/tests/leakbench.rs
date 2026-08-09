@@ -70,14 +70,15 @@ fn corpora_load_cleanly() {
 #[test]
 fn adversarial_corpus_metrics_hold() {
     // The adversarial LeakBench (also the Layer 3 training set). Measured
-    // 2026-07-15 after adding the structured infrastructure/IP detectors
-    // (cloud_storage_uri, internal_hostname): precision 98.2%, FPR 0.96%
-    // (1/104), secret recall 65.3% (32/49), IP recall 30.3% (23/76, up from
-    // 18.4% — the object-storage-URI and internal-hostname detectors convert
-    // proprietary data-location leaks that previously needed Layer 3). Overall
-    // recall stays modest because most remaining IP leaks (proprietary
-    // algorithms, system prompts) are semantic and still need Layer 3. FPR and
-    // precision are the load-bearing gates.
+    // 2026-08-09 after adding the proprietary-IP content detectors
+    // (confidentiality notices/keywords, prompt-secrecy instructions, private
+    // data paths, safety-control overrides, internal identifiers, training
+    // config): precision 98.8%, FPR 0.96% (1/104), secret recall 67.3% (33/49),
+    // IP recall 68.4% (52/76, up from 30.3% — the previous set only found
+    // *locations*, via object-storage URIs and internal hostnames; these find
+    // marked-confidential content and prompt/model material too). The remaining
+    // IP misses are unmarked proprietary algorithms, which stay a Layer 3 job.
+    // FPR and precision are the load-bearing gates.
     let r = run_bench(ADVERSARIAL);
     assert!(
         f(&r, "fpr") <= 0.02,
@@ -94,13 +95,42 @@ fn adversarial_corpus_metrics_hold() {
         "adversarial secret recall regressed to {:.1}% (gate: >=60%)",
         f(&r, "secret_recall") * 100.0
     );
-    // Lock in the structured IP-detector gain (measured 30.3%) with margin so a
-    // regression that drops the cloud-URI/internal-host detectors is caught.
+    // Lock in the IP-detector gain (measured 68.4%) with margin, so dropping or
+    // over-narrowing any of the IP rules is caught rather than quietly halving
+    // the number the product is actually sold on.
     assert!(
-        f(&r, "ip_recall") >= 0.25,
-        "adversarial IP recall regressed to {:.1}% (gate: >=25%)",
+        f(&r, "ip_recall") >= 0.60,
+        "adversarial IP recall regressed to {:.1}% (gate: >=60%)",
         f(&r, "ip_recall") * 100.0
     );
+}
+
+/// Latency gate.
+///
+/// PROJECT.md targets p50 < 120 ms / p95 < 200 ms for a scan, and the README
+/// quotes single-digit milliseconds — but until now nothing failed when that
+/// stopped being true. `provn bench` already reports per-snippet percentiles,
+/// so this asserts on them directly.
+///
+/// The bounds are deliberately far above the measured values (p50 ~0.6-0.8 ms,
+/// p95 ~1.0 ms on a 2026 laptop) because CI runners are shared and noisy: the
+/// gate exists to catch an order-of-magnitude regression — a catastrophically
+/// backtracking regex, or per-line pattern recompilation — not to police jitter.
+#[test]
+fn scan_latency_stays_within_budget() {
+    for corpus in [ADVERSARIAL, REALISTIC] {
+        let r = run_bench(corpus);
+        let p50 = f(&r, "p50_ms");
+        let p95 = f(&r, "p95_ms");
+        assert!(
+            p50 <= 20.0,
+            "{corpus}: p50 regressed to {p50:.2}ms (gate: <=20ms, measured ~0.7ms)"
+        );
+        assert!(
+            p95 <= 50.0,
+            "{corpus}: p95 regressed to {p95:.2}ms (gate: <=50ms, measured ~1.0ms)"
+        );
+    }
 }
 
 #[test]
